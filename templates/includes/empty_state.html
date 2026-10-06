@@ -1,0 +1,7 @@
+{% comment %}Usage: {% include "includes/empty_state.html" with icon="users" title="No patients yet" text="Add your first patient." action_url=url action_label="Add patient" %}{% endcomment %}
+<div class="empty-state">
+  {% include "includes/icon.html" with name=icon|default:"info" %}
+  <h3>{{ title }}</h3>
+  {% if text %}<p>{{ text }}</p>{% endif %}
+  {% if action_url %}<a class="btn btn-primary" href="{{ action_url }}">{{ action_label }}</a>{% endif %}
+</div>

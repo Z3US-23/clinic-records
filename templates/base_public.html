@@ -1,0 +1,24 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="same-origin">
+  <meta name="theme-color" content="#0f766e">
+  <title>{% block title %}{{ PRODUCT_NAME }}{% endblock %}</title>
+  <link rel="icon" href="{% static 'icons/icon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="public-body {% block body_class %}{% endblock %}">
+  {% block brand %}<div class="public-brand"><span class="brand-mark" aria-hidden="true">+</span>{{ PRODUCT_NAME }}</div>{% endblock %}
+  <main class="public-card {% block card_class %}{% endblock %}" id="main">
+    {% include "includes/messages.html" %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block footer %}{% endblock %}
+  <script src="{% static 'js/app.js' %}" defer></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

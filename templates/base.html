@@ -1,0 +1,100 @@
+{% load static core_tags %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f766e">
+  <title>{% block title %}{{ PRODUCT_NAME }}{% endblock %} · {{ current_clinic.name|default:PRODUCT_NAME }}</title>
+  <link rel="manifest" href="{% url 'core:manifest' %}">
+  <link rel="icon" href="{% static 'icons/icon.svg' %}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{% static 'icons/icon-192.png' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+{% with section=request.resolver_match.app_name url_name=request.resolver_match.url_name %}
+<body class="{% block body_class %}{% endblock %}" data-sw-url="{% url 'core:service_worker' %}">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app">
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <a class="sidebar-brand" href="{% url 'core:dashboard' %}"><span class="brand-mark" aria-hidden="true">+</span>{{ PRODUCT_NAME }}</a>
+
+    {% if user_clinics|length > 1 %}
+      <details class="clinic-switch">
+        <summary><span class="truncate">{{ current_clinic.name }}</span>{% include "includes/icon.html" with name="chevron-down" size="sm" %}</summary>
+        <div class="clinic-switch-menu">
+          {% for m in user_clinics %}{% if m.clinic_id != current_clinic.id %}
+            <form method="post" action="{% url 'accounts:switch_clinic' m.clinic_id %}" class="inline-form">{% csrf_token %}
+              <button type="submit">Switch to {{ m.clinic.name }}</button>
+            </form>
+          {% endif %}{% endfor %}
+        </div>
+      </details>
+    {% elif current_clinic %}
+      <div class="clinic-switch"><div class="clinic-name"><span class="truncate">{{ current_clinic.name }}</span></div></div>
+    {% endif %}
+
+    <nav class="nav">
+      <a class="nav-link {% if section == 'core' and url_name == 'dashboard' %}active{% endif %}" href="{% url 'core:dashboard' %}">{% include "includes/icon.html" with name="home" %}Today</a>
+      <a class="nav-link {% if section == 'patients' %}active{% endif %}" href="{% url 'patients:list' %}">{% include "includes/icon.html" with name="users" %}Patients</a>
+      <a class="nav-link {% if section == 'appointments' %}active{% endif %}" href="{% url 'appointments:day' %}">{% include "includes/icon.html" with name="calendar" %}Appointments</a>
+      <a class="nav-link {% if section == 'reminders' and url_name != 'templates' %}active{% endif %}" href="{% url 'reminders:list' %}">{% include "includes/icon.html" with name="bell" %}Reminders{% if nav_reminders_due %}<span class="badge badge-count">{{ nav_reminders_due }}</span>{% endif %}</a>
+      {% if is_clinician %}
+        <a class="nav-link {% if section == 'clinical' %}active{% endif %}" href="{% url 'clinical:visit_list' %}">{% include "includes/icon.html" with name="clipboard" %}Visits</a>
+      {% endif %}
+
+      {% if is_owner %}
+        <div class="nav-section">Clinic</div>
+        <a class="nav-link {% if section == 'accounts' and url_name|slice:':5' == 'staff' %}active{% endif %}" href="{% url 'accounts:staff_list' %}">{% include "includes/icon.html" with name="user-plus" %}Staff</a>
+        <a class="nav-link {% if section == 'accounts' and url_name == 'clinic_settings' %}active{% endif %}" href="{% url 'accounts:clinic_settings' %}">{% include "includes/icon.html" with name="settings" %}Clinic settings</a>
+        <a class="nav-link {% if section == 'reminders' and url_name == 'templates' %}active{% endif %}" href="{% url 'reminders:templates' %}">{% include "includes/icon.html" with name="message" %}Message templates</a>
+        <a class="nav-link {% if section == 'core' and url_name == 'export' %}active{% endif %}" href="{% url 'core:export' %}">{% include "includes/icon.html" with name="download" %}Export &amp; backup</a>
+        <a class="nav-link {% if section == 'core' and url_name == 'audit_log' %}active{% endif %}" href="{% url 'core:audit_log' %}">{% include "includes/icon.html" with name="shield" %}Audit log</a>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-user">
+      <span class="avatar avatar-sm">{{ user.full_name|initials }}</span>
+      <a class="who" href="{% url 'accounts:profile' %}" title="Your profile">
+        <strong>{{ current_membership.display_name|default:user.full_name }}</strong>
+        <span>{{ current_membership.get_role_display }}</span>
+      </a>
+      <form method="post" action="{% url 'accounts:logout' %}" class="inline-form">{% csrf_token %}
+        <button type="submit" class="icon-btn" title="Sign out" aria-label="Sign out">{% include "includes/icon.html" with name="logout" %}</button>
+      </form>
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" data-sidebar-backdrop hidden></div>
+
+  <div class="main">
+    <header class="topbar no-print">
+      <button type="button" class="icon-btn menu-toggle" data-toggle-sidebar aria-label="Open menu" aria-controls="sidebar">{% include "includes/icon.html" with name="menu" %}</button>
+      <div class="global-search" data-patient-search data-url="{% url 'patients:search_json' %}">
+        {% include "includes/icon.html" with name="search" %}
+        <input type="search" placeholder="Find patient: name, phone or MR no." aria-label="Search patients" autocomplete="off">
+        <div class="search-results" role="listbox" hidden></div>
+      </div>
+      <div class="topbar-actions">
+        <a class="btn btn-secondary hide-mobile" href="{% url 'appointments:create' %}">{% include "includes/icon.html" with name="calendar-plus" %}<span class="btn-label">Book</span></a>
+        <a class="btn btn-primary" href="{% url 'patients:create' %}">{% include "includes/icon.html" with name="user-plus" %}<span class="btn-label">New patient</span></a>
+      </div>
+    </header>
+
+    <main class="content {% block content_class %}{% endblock %}" id="main">
+      {% include "includes/messages.html" %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <nav class="bottom-nav no-print" aria-label="Quick navigation">
+    <a href="{% url 'core:dashboard' %}" class="{% if section == 'core' and url_name == 'dashboard' %}active{% endif %}">{% include "includes/icon.html" with name="home" %}Today</a>
+    <a href="{% url 'patients:list' %}" class="{% if section == 'patients' %}active{% endif %}">{% include "includes/icon.html" with name="users" %}Patients</a>
+    <a href="{% url 'appointments:day' %}" class="{% if section == 'appointments' %}active{% endif %}">{% include "includes/icon.html" with name="calendar" %}Appointments</a>
+    <a href="{% url 'reminders:list' %}" class="{% if section == 'reminders' %}active{% endif %}">{% include "includes/icon.html" with name="bell" %}Reminders{% if nav_reminders_due %}<span class="badge badge-count">{{ nav_reminders_due }}</span>{% endif %}</a>
+  </nav>
+</div>
+<script src="{% static 'js/app.js' %}" defer></script>
+{% block extra_js %}{% endblock %}
+</body>
+{% endwith %}
+</html>

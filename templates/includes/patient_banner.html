@@ -1,0 +1,22 @@
+{% load core_tags %}
+{% comment %}
+Compact patient header for pages about one patient (visit form, lab upload, appointment...).
+Usage: {% include "includes/patient_banner.html" with patient=patient %}
+Allergies are shown only to clinicians (is_clinician from the context processor).
+{% endcomment %}
+<div class="patient-banner">
+  <span class="avatar avatar-lg">{{ patient.full_name|initials }}</span>
+  <div class="grow">
+    <a class="name" href="{% url 'patients:detail' patient.pk %}">{{ patient.full_name }}</a>
+    <div class="facts">
+      <span>{{ patient.mrn }}</span>
+      {% if patient.age_display %}<span>{{ patient.age_display }}</span>{% endif %}
+      <span>{{ patient.get_sex_display }}</span>
+      {% if patient.phone %}<span>{% include "includes/icon.html" with name="phone" size="sm" %} {{ patient.phone }}</span>{% endif %}
+      {% if is_clinician and patient.blood_group %}<span>Blood {{ patient.blood_group }}</span>{% endif %}
+    </div>
+  </div>
+  {% if is_clinician and patient.allergies %}
+    <div class="allergy-banner">{% include "includes/icon.html" with name="alert" size="sm" %}Allergies: {{ patient.allergies|truncatechars:80 }}</div>
+  {% endif %}
+</div>

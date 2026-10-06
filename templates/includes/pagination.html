@@ -1,0 +1,10 @@
+{% comment %}Usage inside a card, after the table: {% include "includes/pagination.html" %} (needs page_obj; keeps other query params){% endcomment %}
+{% if page_obj and page_obj.paginator.num_pages > 1 %}
+<nav class="pagination" aria-label="Pages">
+  <span>Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }}</span>
+  <span class="btn-group">
+    {% if page_obj.has_previous %}<a class="btn btn-secondary btn-sm" href="{% querystring page=page_obj.previous_page_number %}">{% include "includes/icon.html" with name="chevron-left" size="sm" %}Previous</a>{% endif %}
+    {% if page_obj.has_next %}<a class="btn btn-secondary btn-sm" href="{% querystring page=page_obj.next_page_number %}">Next{% include "includes/icon.html" with name="chevron-right" size="sm" %}</a>{% endif %}
+  </span>
+</nav>
+{% endif %}

@@ -1,0 +1,14 @@
+{% comment %}
+Renders a whole form's fields. Usage:
+  {% include "includes/form_fields.html" with form=form %}            (single column)
+  {% include "includes/form_fields.html" with form=form grid=True %}  (two columns; textareas span both)
+{% endcomment %}
+{% if form.non_field_errors %}
+  <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for e in form.non_field_errors %}{{ e }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+{% endif %}
+{% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+<div class="{% if grid %}form-grid{% else %}stack{% endif %}">
+  {% for field in form.visible_fields %}
+    {% include "includes/field.html" with field=field %}
+  {% endfor %}
+</div>

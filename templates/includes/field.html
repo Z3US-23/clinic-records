@@ -1,0 +1,20 @@
+{% comment %}One form field with label, help text and errors. Usage: {% include "includes/field.html" with field=form.full_name %}{% endcomment %}
+{% with wtype=field.field.widget.input_type %}
+{% if wtype == "checkbox" %}
+  <div class="field field-check {% if field.errors %}has-error{% endif %} span-2">
+    {{ field }}
+    <div class="field-check-text">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {% if field.help_text %}<span class="help">{{ field.help_text }}</span>{% endif %}
+      {% if field.errors %}{{ field.errors }}{% endif %}
+    </div>
+  </div>
+{% else %}
+  <div class="field {% if field.errors %}has-error{% endif %} {% if field.field.widget.attrs.rows or field.field.widget.template_name == 'django/forms/widgets/textarea.html' %}span-2{% endif %}">
+    <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required" aria-hidden="true">*</span>{% endif %}</label>
+    {{ field }}
+    {% if field.help_text %}<span class="help">{{ field.help_text }}</span>{% endif %}
+    {% if field.errors %}{{ field.errors }}{% endif %}
+  </div>
+{% endif %}
+{% endwith %}

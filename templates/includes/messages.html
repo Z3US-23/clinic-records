@@ -1,0 +1,11 @@
+{% if messages %}
+<div class="messages" role="status">
+  {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" data-auto-dismiss>
+      {% if message.tags == 'success' %}{% include "includes/icon.html" with name="check" %}{% elif message.tags == 'danger' or message.tags == 'warning' %}{% include "includes/icon.html" with name="alert" %}{% else %}{% include "includes/icon.html" with name="info" %}{% endif %}
+      <div>{{ message }}</div>
+      <button type="button" class="alert-close" aria-label="Dismiss" data-dismiss>&times;</button>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
