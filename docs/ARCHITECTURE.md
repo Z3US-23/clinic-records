@@ -132,6 +132,12 @@ Replace placeholders with real views; **keep every name and path signature**.
   that are due (appointment reminders N days before, follow-up reminders N days before `Visit.follow_up_date`,
   overdue reminders when a follow-up date passed by `clinic.overdue_grace_days` with no later visit/appointment).
   Called by the dashboard and the reminders page; also by the `generate_reminders` management command (daily cron).
+- `apps.reminders.services.refresh_for_appointment(appointment, rescheduled=False)` — appointments app calls this after
+  create, edit (pass `rescheduled=True` when date/time or doctor changed) and status changes. Cancelled / no-show /
+  completed → pending appointment reminders are removed; rescheduled → the reminder is re-prepared with the new time
+  (set back to "To send" even if the old one was sent); new → created now if already inside the reminder window.
+- `apps.reminders.services.refresh_for_visit(visit)` — clinical app calls this after a visit is saved. A new visit also
+  makes earlier pending follow-up / missed-follow-up reminders for that patient unnecessary.
 - `Appointment.get_confirm_url()` — absolute public link (uses `settings.SITE_URL`).
 - `Patient.whatsapp_number` — normalized digits, set on save; `Patient.can_receive_whatsapp`.
 
