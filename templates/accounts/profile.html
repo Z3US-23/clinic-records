@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+{% block title %}Your profile{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/accounts.css' %}">{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div class="row">
+      <span class="avatar avatar-lg">{{ user.full_name|initials }}</span>
+      <div>
+        <h1>{{ current_membership.display_name|default:user.full_name }}</h1>
+        <p class="subtitle">{{ current_membership.get_role_display }} at {{ current_clinic.name }}</p>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" class="stack">
+    {% csrf_token %}
+
+    <div class="card">
+      <div class="card-header"><h2>Your details</h2></div>
+      <div class="card-body">
+        {% include "includes/form_fields.html" with form=profile_form %}
+      </div>
+    </div>
+
+    {% if details_form %}
+      <div class="card">
+        <div class="card-header"><h2>On printed prescriptions</h2></div>
+        <div class="card-body stack">
+          <p class="form-hint mb-0">These details are printed under your name on prescriptions from {{ current_clinic.name }}.</p>
+          {% include "includes/form_fields.html" with form=details_form grid=True %}
+          <div class="prescription-preview">
+            <span class="subtle small">Currently prints as</span>
+            <strong>{{ current_membership.display_name }}</strong>
+            {% if current_membership.qualifications %}<span>{{ current_membership.qualifications }}</span>{% endif %}
+            {% if current_membership.registration_number %}<span class="muted small">Reg. no. {{ current_membership.registration_number }}</span>{% endif %}
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save profile</button>
+    </div>
+  </form>
+
+  <div class="card mt-3">
+    <div class="card-header"><h2>Signing in</h2></div>
+    <div class="card-body stack">
+      <dl class="kv">
+        <dt>Email</dt><dd>{{ user.email }}</dd>
+        <dt>Last sign-in</dt><dd>{{ user.last_login|date:"j M Y, g:i a"|default:"—" }}</dd>
+      </dl>
+      <div>
+        <a class="btn btn-secondary" href="{% url 'accounts:password_change' %}">{% include "includes/icon.html" with name="shield" %}Change password</a>
+      </div>
+    </div>
+  </div>
+
+  {% if user_clinics|length > 1 %}
+    <div class="card mt-3">
+      <div class="card-header"><h2>Your clinics</h2></div>
+      <ul class="list">
+        {% for m in user_clinics %}
+          <li class="list-item">
+            <div class="grow">
+              <div class="title">{{ m.clinic.name }}</div>
+              <div class="meta">{{ m.clinic.city }}</div>
+            </div>
+            <span class="badge {{ m.role|badge_class }}">{{ m.get_role_display }}</span>
+            {% if m.clinic_id == current_clinic.id %}
+              <span class="badge badge-success">Working here now</span>
+            {% else %}
+              <form method="post" action="{% url 'accounts:switch_clinic' m.clinic_id %}" class="inline-form">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary btn-sm">Switch</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endblock %}

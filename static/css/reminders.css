@@ -1,0 +1,98 @@
+/* Reminders: only what the design system (app.css) doesn't already cover —
+   the WhatsApp-style message preview, the reminders table on phones, and the
+   compose / templates page layouts. */
+
+:root {
+  --rm-chat-bg: #efeae2;
+  --rm-bubble: #dcf5d0;
+  --rm-bubble-text: #10241a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --rm-chat-bg: #10171b;
+    --rm-bubble: #1d3b2b;
+    --rm-bubble-text: #e6f2ea;
+  }
+}
+
+/* ---------- WhatsApp-style preview ---------- */
+.wa-chat {
+  background: var(--rm-chat-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.wa-bubble {
+  background: var(--rm-bubble);
+  color: var(--rm-bubble-text);
+  border-radius: 10px 10px 2px 10px;
+  padding: 9px 12px;
+  margin-left: auto;
+  max-width: 46ch;
+  width: fit-content;
+  min-height: 2.2em;
+  font-size: 0.93rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- Tabs ---------- */
+@media (max-width: 520px) {
+  .rm-tabs .tab { padding: 9px 10px; }
+}
+
+/* ---------- Reminders table ---------- */
+.rm-table td { vertical-align: top; }
+.rm-message-cell { min-width: 220px; max-width: 380px; }
+.rm-preview summary {
+  cursor: pointer; color: var(--text-muted); font-size: 0.88rem; list-style-position: inside;
+}
+.rm-preview summary:hover { color: var(--text); }
+.rm-preview[open] summary { margin-bottom: 8px; }
+.rm-preview[open] .rm-summary-text { display: none; }
+.rm-preview[open] summary::after { content: "Hide message"; }
+.rm-actions-cell { text-align: right; }
+.rm-actions { justify-content: flex-end; align-items: center; }
+
+@media (max-width: 860px) {
+  /* Stacked rows: the message and the buttons get the full width. */
+  .rm-table td.rm-message-cell,
+  .rm-table td.rm-actions-cell { display: block; max-width: none; text-align: left; }
+  .rm-table td.rm-message-cell::before { display: block; margin-bottom: 4px; }
+  .rm-actions { justify-content: flex-start; padding-top: 4px; }
+  .rm-actions .inline-form:first-child .btn-whatsapp { height: 40px; padding: 0 16px; }
+}
+
+/* ---------- New message: patient search ---------- */
+.rm-search { display: flex; gap: 8px; }
+.rm-search input { flex: 1; }
+.rm-results .list-item .meta { display: block; }
+
+/* ---------- New message: send now / save for later ---------- */
+/* "Save to send later" comes first in the HTML (so Enter in the date box never sends);
+   "Send now" is shown first on screen. */
+.rm-compose-actions { display: flex; flex-direction: column; gap: 14px; }
+.rm-now { order: -1; }
+.rm-later { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.rm-later .field { min-width: 170px; }
+@media (max-width: 860px) {
+  .rm-now .btn { width: 100%; }
+}
+
+/* ---------- Message templates ---------- */
+.rm-placeholders { position: sticky; top: calc(var(--topbar-h) + 16px); }
+.rm-placeholder-list { margin: 0; font-size: 0.88rem; }
+.rm-placeholder-list dt { margin-top: 10px; }
+.rm-placeholder-list dt:first-child { margin-top: 0; }
+.rm-placeholder-list dd { margin: 2px 0 0; color: var(--text-muted); }
+.rm-placeholder-list code { background: var(--surface-3); padding: 1px 6px; border-radius: 5px; }
+@media (max-width: 1100px) {
+  .rm-placeholders { position: static; }
+}
+
+/* Character counter added by reminders.js under message boxes */
+.rm-count { font-size: 0.8rem; color: var(--text-subtle); text-align: right; }
+.rm-count.is-over { color: var(--danger-text); font-weight: 600; }

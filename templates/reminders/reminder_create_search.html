@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+
+{% block title %}New message{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/reminders.css' %}">{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'reminders:list' %}">Reminders</a><span aria-hidden="true">/</span><span>New message</span></div>
+    <h1>New message</h1>
+    <p class="subtitle">Who do you want to message on WhatsApp?</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="get" action="{% url 'reminders:create' %}" class="rm-search" role="search">
+      <label for="{{ form.q.id_for_label }}" class="visually-hidden">{{ form.q.label }}</label>
+      {{ form.q }}
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="search" %}Search</button>
+    </form>
+    {% if form.q.errors %}{{ form.q.errors }}{% endif %}
+  </div>
+
+  {% if query %}
+    {% if results %}
+      <ul class="list rm-results">
+        {% for p in results %}
+          <li>
+            <a class="list-item" href="{% url 'reminders:create' %}?patient={{ p.pk }}">
+              <span class="avatar">{{ p.full_name|initials }}</span>
+              <span class="grow">
+                <span class="title">{{ p.full_name }}</span>
+                <span class="meta">
+                  {{ p.mrn }}{% if p.age_display %} · {{ p.age_display }}{% endif %}
+                  · {% if p.whatsapp_number %}{{ p.whatsapp_number|phone_display }}{% else %}No WhatsApp number{% endif %}
+                </span>
+              </span>
+              <span class="btn btn-secondary btn-sm">{% include "includes/icon.html" with name="message" size="sm" %}Write message</span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      {% url 'patients:create' as new_patient_url %}
+      {% include "includes/empty_state.html" with icon="search" title="No patient found" text="Check the spelling, or search by phone number or MR number. Archived patients are not shown." action_url=new_patient_url action_label="Add new patient" %}
+    {% endif %}
+  {% else %}
+    <div class="card-footer muted small">Search by name, phone number or MR number. You can also start a message from a patient's page.</div>
+  {% endif %}
+</div>
+{% endblock %}

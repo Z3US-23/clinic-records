@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% load static clinical_tags %}
+
+{% block title %}{% if is_new %}New visit{% else %}Edit visit{% endif %} – {{ patient.full_name }}{% endblock %}
+
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/clinical.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs">
+      <a href="{% url 'patients:list' %}">Patients</a><span>/</span>
+      <a href="{% url 'patients:detail' patient.pk %}">{{ patient.full_name }}</a><span>/</span>
+      {% if is_new %}<span>New visit</span>{% else %}<a href="{{ visit.get_absolute_url }}">Visit on {{ visit.visit_date|date:"j M Y" }}</a>{% endif %}
+    </div>
+    <h1>{% if is_new %}New visit{% else %}Edit visit{% endif %}</h1>
+    <p class="subtitle">
+      {% if is_new %}Today · {{ doctor_name }}{% else %}{{ visit.visit_date|date:"j M Y" }}, {{ visit.visit_date|time:"g:i a" }} · {{ doctor_name }}{% endif %}
+    </p>
+  </div>
+</div>
+
+{% include "includes/patient_banner.html" with patient=patient %}
+
+{% if patient.is_archived %}
+  <div class="alert alert-warning">{% include "includes/icon.html" with name="alert" %}<div>This patient's record is archived.</div></div>
+{% endif %}
+{% if appointment %}
+  <div class="alert alert-info">{% include "includes/icon.html" with name="calendar" %}<div>For the appointment on {{ appointment.scheduled_at|date:"j M Y" }} at {{ appointment.scheduled_at|time:"g:i a" }}. It will be marked as <strong>Seen</strong> when you save.</div></div>
+{% endif %}
+{% if copied_from %}
+  <div class="alert alert-info">{% include "includes/icon.html" with name="repeat" %}<div>Medicines copied from the visit on {{ copied_from.visit_date|date:"j M Y" }}. Check doses before saving.</div></div>
+{% endif %}
+{% if form.errors or formset.total_error_count %}
+  <div class="alert alert-danger" role="alert">{% include "includes/icon.html" with name="alert" %}<div>The visit was not saved. Please check the boxes marked in red.{% for error in form.non_field_errors %}<br>{{ error }}{% endfor %}</div></div>
+{% endif %}
+
+<div class="grid-sidebar">
+  <form method="post" class="form" data-visit-form>
+    {% csrf_token %}
+
+    <section class="card">
+      <div class="card-header"><h2>Presenting complaint &amp; history</h2></div>
+      <div class="card-body stack">
+        {% include "includes/field.html" with field=form.chief_complaint %}
+        {% include "includes/field.html" with field=form.history %}
+        {% include "includes/field.html" with field=form.examination %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header"><h2>Vitals</h2><span class="subtle small">All optional</span></div>
+      <div class="card-body">
+        <div class="vitals-grid">
+          <div class="field vital-bp {% if form.bp_systolic.errors or form.bp_diastolic.errors %}has-error{% endif %}">
+            <label for="{{ form.bp_systolic.id_for_label }}">Blood pressure (mmHg)</label>
+            <div class="bp-pair">{{ form.bp_systolic }}<span aria-hidden="true">/</span>{{ form.bp_diastolic }}</div>
+            {% if form.bp_systolic.errors %}{{ form.bp_systolic.errors }}{% endif %}
+            {% if form.bp_diastolic.errors %}{{ form.bp_diastolic.errors }}{% endif %}
+          </div>
+          {% include "includes/field.html" with field=form.pulse %}
+          {% include "includes/field.html" with field=form.temperature_c %}
+          {% include "includes/field.html" with field=form.spo2 %}
+          {% include "includes/field.html" with field=form.weight_kg %}
+          {% include "includes/field.html" with field=form.height_cm %}
+          {% include "includes/field.html" with field=form.blood_sugar %}
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header"><h2>Diagnosis &amp; plan</h2></div>
+      <div class="card-body stack">
+        {% include "includes/field.html" with field=form.diagnosis %}
+        {% include "includes/field.html" with field=form.plan %}
+      </div>
+    </section>
+
+    <section class="card" data-formset data-prefix="{{ formset.prefix }}">
+      <div class="card-header">
+        <h2 class="row">{% include "includes/icon.html" with name="pill" %}Prescription</h2>
+        {% if repeat_url %}
+          <a class="btn btn-secondary btn-sm" href="{{ repeat_url }}" data-repeat-rx
+             title="Copy the medicines from {{ last_rx_visit.visit_date|date:'j M Y' }}">{% include "includes/icon.html" with name="repeat" size="sm" %}Repeat last prescription</a>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        {{ formset.management_form }}
+        {% if formset.non_form_errors %}
+          <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for error in formset.non_form_errors %}{{ error }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+        {% endif %}
+        <div class="rx-rows" data-formset-rows>
+          {% for item_form in formset %}
+            {% include "clinical/_prescription_row.html" with form=item_form %}
+          {% endfor %}
+        </div>
+        <template data-formset-template>{% include "clinical/_prescription_row.html" with form=formset.empty_form %}</template>
+        <div class="row mt-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-formset-add hidden>{% include "includes/icon.html" with name="plus" size="sm" %}Add medicine</button>
+          <span class="form-hint">Rows without a medicine are skipped.</span>
+        </div>
+        <datalist id="medicine-options">
+          {% for name in medicine_names %}<option value="{{ name }}"></option>{% endfor %}
+        </datalist>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header"><h2>Follow-up</h2></div>
+      <div class="card-body">
+        <div class="follow-up" data-follow-up data-base-date="{{ form.visit_day|date:'Y-m-d' }}">
+          {% include "includes/field.html" with field=form.follow_up_date %}
+          <div class="field {% if form.follow_up_in.errors %}has-error{% endif %}">
+            <span class="field-label" id="follow-up-in-label">{{ form.follow_up_in.label }}</span>
+            <div class="quick-picks" role="radiogroup" aria-labelledby="follow-up-in-label">
+              {% for choice in form.follow_up_in %}
+                <label class="chip quick-pick" for="{{ choice.id_for_label }}">{{ choice.tag }}{{ choice.choice_label }}</label>
+              {% endfor %}
+            </div>
+            {% if form.follow_up_in.errors %}{{ form.follow_up_in.errors }}{% endif %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-lg">{% include "includes/icon.html" with name="check" %}Save visit</button>
+      <a class="btn btn-ghost" href="{{ cancel_url }}">Cancel</a>
+    </div>
+  </form>
+
+  <aside class="stack">
+    {% if previous_visit %}
+      <section class="card">
+        <div class="card-header">
+          <h2>Previous visit</h2>
+          <a class="btn btn-ghost btn-sm" href="{{ previous_visit.get_absolute_url }}">Open</a>
+        </div>
+        <div class="card-body stack-sm">
+          <div class="muted small">{{ previous_visit.visit_date|date:"j M Y" }} · {{ previous_visit.doctor.full_name }}</div>
+          <dl class="kv">
+            <dt>Complaint</dt><dd>{{ previous_visit.chief_complaint }}</dd>
+            <dt>Diagnosis</dt><dd>{{ previous_visit.diagnosis|default:"—" }}</dd>
+            {% if previous_visit.follow_up_date %}<dt>Follow-up</dt><dd>{{ previous_visit.follow_up_date|date:"j M Y" }}</dd>{% endif %}
+          </dl>
+          {% with prev_items=previous_visit.prescription_items.all %}
+            {% if prev_items %}
+              <ul class="rx-mini">
+                {% for item in prev_items %}
+                  <li><strong>{{ item.medicine }}</strong>{% if item|rx_details %} <span class="muted">{{ item|rx_details }}</span>{% endif %}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="muted small mb-0">No medicines prescribed.</p>
+            {% endif %}
+          {% endwith %}
+        </div>
+      </section>
+    {% endif %}
+
+    {% if patient.allergies or patient.chronic_conditions %}
+      <section class="card">
+        <div class="card-header"><h2>Medical background</h2></div>
+        <div class="card-body stack-sm">
+          {% if patient.allergies %}
+            <div><div class="muted small">Allergies</div><div class="text-danger pre-line"><strong>{{ patient.allergies }}</strong></div></div>
+          {% endif %}
+          {% if patient.chronic_conditions %}
+            <div><div class="muted small">Long-term conditions</div><div class="pre-line">{{ patient.chronic_conditions }}</div></div>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/clinical.js' %}" defer></script>{% endblock %}

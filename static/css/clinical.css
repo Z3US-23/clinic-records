@@ -1,0 +1,99 @@
+/* Clinical pages (visits, prescriptions, lab results).
+   Builds on the tokens and components in app.css; only genuinely new pieces live here. */
+
+/* ---------- Visit form: vitals ---------- */
+.vitals-grid { display: grid; gap: 12px 14px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.vitals-grid .vital-bp { grid-column: span 2; }
+.vitals-grid input { height: 38px; }
+.bp-pair { display: flex; align-items: center; gap: 6px; }
+.bp-pair span { color: var(--text-muted); font-weight: 600; }
+
+/* ---------- Visit form: prescription rows ---------- */
+.rx-rows .formset-row:first-child { padding-top: 0; }
+.rx-row-remove { align-self: end; min-width: 84px; }
+.rx-remove-check { display: inline-flex; align-items: center; gap: 6px; height: 40px; font-weight: 500; color: var(--danger-text); cursor: pointer; }
+.rx-row-errors { grid-column: 1 / -1; }
+@media (min-width: 861px) {
+  /* On wide screens the column labels only need to show above the first row. */
+  .rx-rows .formset-row + .formset-row .field > label:not(.rx-remove-check) {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+}
+
+/* ---------- Visit form: follow-up quick picks ---------- */
+.follow-up { display: grid; gap: 14px 16px; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: start; }
+.field-label { font-weight: 600; font-size: 0.88rem; }
+.quick-picks { display: flex; gap: 6px; flex-wrap: wrap; }
+.quick-pick { cursor: pointer; height: 36px; padding: 0 12px; font-weight: 550; }
+.quick-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.quick-pick:hover { border-color: var(--border-strong); color: var(--text); }
+.quick-pick:has(input:checked) { background: var(--primary-soft); border-color: transparent; color: var(--primary-text); }
+.quick-pick:has(input:focus-visible) { box-shadow: var(--focus); }
+
+/* Previous visit card: short medicine list */
+.rx-mini { margin: 0; padding-left: 1.1em; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; }
+
+/* ---------- Visit detail ---------- */
+.vitals-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.vital { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; min-width: 96px; }
+.vital-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.vital-value { font-weight: 650; font-variant-numeric: tabular-nums; }
+.note-heading { font-size: 0.78rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
+.follow-up-date { font-size: 1.15rem; font-weight: 700; }
+
+/* ---------- Visit list filters ---------- */
+.filter-date { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-muted); }
+
+@media (max-width: 860px) {
+  .vitals-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .follow-up { grid-template-columns: minmax(0, 1fr); }
+  .rx-row-remove { min-width: 0; }
+  .visit-filters > * { flex: 1 1 100%; max-width: none; }
+  .visit-filters .filter-date { flex: 1 1 40%; }
+  .visit-filters .filter-date input { min-width: 0; }
+}
+
+/* ---------- Printable prescription (A5) ---------- */
+@page prescription { size: A5; margin: 10mm; }
+
+.rx-body { background: var(--surface-3); color: #111; }
+.rx-toolbar { max-width: 148mm; margin: 16px auto 0; display: flex; justify-content: space-between; gap: 8px; }
+.rx-sheet {
+  page: prescription;
+  width: 148mm; min-height: 210mm; margin: 12px auto 32px; padding: 11mm 10mm;
+  background: #fff; color: #111; box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 10.5pt; line-height: 1.45;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.rx-sheet p { margin: 0; }
+.rx-small { font-size: 8.5pt; color: #444; }
+.rx-label { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; color: #555; font-weight: 600; }
+
+.rx-letterhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 8px; border-bottom: 2px solid #0f766e; }
+.rx-clinic-name { font-size: 15pt; font-weight: 750; color: #0b5c55; line-height: 1.2; }
+.rx-doctor { text-align: right; }
+.rx-doctor-name { font-weight: 700; font-size: 11pt; }
+
+.rx-patient { display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 6px 0; border-bottom: 1px solid #ccc; }
+.rx-allergies { color: #a12a21; border: 1px solid #e3a59f; border-radius: 4px; padding: 3px 8px; }
+.rx-vitals { font-size: 9.5pt; color: #333; }
+
+.rx-main { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; }
+.rx-symbol { font-family: Georgia, "Times New Roman", serif; font-size: 24pt; font-weight: 700; line-height: 1; color: #0b5c55; }
+.rx-medicines { margin: 4px 0 0; padding-left: 1.3em; flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.rx-instructions { font-style: italic; color: #333; }
+.rx-advice { border-top: 1px dashed #bbb; padding-top: 6px; }
+
+.rx-footer { margin-top: auto; padding-top: 18px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
+.rx-signature { min-width: 48mm; border-top: 1px solid #333; padding-top: 4px; text-align: center; font-size: 9pt; }
+
+@media (max-width: 600px) {
+  .rx-toolbar { margin: 12px 12px 0; }
+  .rx-sheet { width: auto; min-height: 0; margin: 12px; padding: 18px 16px; }
+}
+
+@media print {
+  .rx-body { background: #fff; }
+  .rx-sheet { width: auto; min-height: 188mm; margin: 0; padding: 0; box-shadow: none; }
+}

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% load static core_tags appointment_tags %}
+
+{% block title %}Appointments {{ day|date:"j M" }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/appointments.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><span>Appointments</span><span aria-hidden="true">›</span><span>Day</span></div>
+    <h1>{{ day|date:"l, j M Y" }}</h1>
+    <p class="subtitle">
+      {% if relative_day %}{{ relative_day }} · {% endif %}{{ active_count }} appointment{{ active_count|pluralize }}{% if selected_doctor %} with {{ selected_doctor_name }}{% endif %}{% if waiting %} · {{ waiting|length }} waiting{% endif %}
+    </p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'appointments:week' %}?start={{ day|date:'Y-m-d' }}{% if selected_doctor %}&amp;doctor={{ selected_doctor.pk }}{% endif %}">{% include "includes/icon.html" with name="calendar" %}Week</a>
+    <a class="btn btn-primary" href="{{ book_url }}">{% include "includes/icon.html" with name="calendar-plus" %}Book appointment</a>
+  </div>
+</div>
+
+<div class="toolbar appt-toolbar">
+  <div class="btn-group" role="group" aria-label="Change day">
+    <a class="btn btn-secondary" href="{% querystring date=prev_day %}" title="Previous day" aria-label="Previous day">{% include "includes/icon.html" with name="chevron-left" %}</a>
+    <a class="btn btn-secondary" href="{% querystring date=None %}"{% if is_today %} aria-current="date"{% endif %}>Today</a>
+    <a class="btn btn-secondary" href="{% querystring date=next_day %}" title="Next day" aria-label="Next day">{% include "includes/icon.html" with name="chevron-right" %}</a>
+  </div>
+  <form method="get" class="appt-filter" action="{% url 'appointments:day' %}">
+    <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" aria-label="Go to date">
+    {% if doctor_options|length > 1 or selected_doctor %}
+      <select name="doctor" aria-label="Doctor" data-auto-submit>
+        <option value="">All doctors</option>
+        {% for option in doctor_options %}
+          <option value="{{ option.id }}"{% if selected_doctor and option.id == selected_doctor.pk %} selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <button type="submit" class="btn btn-secondary">Show</button>
+  </form>
+</div>
+
+<div class="appt-chips" aria-label="Appointments by status">
+  {% for chip in status_chips %}
+    <span class="chip{% if not chip.count %} is-zero{% endif %}"><span class="status-dot status-{{ chip.status }}" aria-hidden="true"></span>{{ chip.label }} <strong>{{ chip.count }}</strong></span>
+  {% endfor %}
+</div>
+
+{% if show_waiting_room %}
+<section class="card mb-2 waiting-room" aria-labelledby="waiting-room-title">
+  <div class="card-header">
+    <h2 id="waiting-room-title">Waiting room</h2>
+    <span class="badge {% if waiting %}badge-primary{% else %}badge-muted{% endif %}">{{ waiting|length }} waiting</span>
+  </div>
+  {% if waiting %}
+    <ol class="list">
+      {% for a in waiting %}
+        <li class="list-item">
+          <span class="token" title="Token {{ forloop.counter }}">{{ forloop.counter }}</span>
+          <div class="grow">
+            <a class="title" href="{% url 'patients:detail' a.patient_id %}">{{ a.patient.full_name }}</a>
+            <div class="meta">
+              {{ a.patient.mrn }} · here since {{ a.updated_at|time:"g:i a" }}{% if a.doctor_name %} · {{ a.doctor_name }}{% endif %}{% if a.reason %} · {{ a.reason }}{% endif %}
+            </div>
+          </div>
+          <div class="btn-group">
+            {% if is_clinician %}
+              <a class="btn btn-primary btn-sm" href="{% url 'clinical:visit_create' a.patient_id %}?appointment={{ a.pk }}">{% include "includes/icon.html" with name="clipboard" size="sm" %}Start visit</a>
+            {% endif %}
+            <form method="post" action="{% url 'appointments:set_status' a.pk %}" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="status" value="completed">
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-secondary btn-sm">{% include "includes/icon.html" with name="check" size="sm" %}Mark seen</button>
+            </form>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <div class="card-body muted">No one is waiting. Tap “Arrived” when a patient comes in.</div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="schedule-title">
+  <div class="card-header">
+    <h2 id="schedule-title">Schedule</h2>
+  </div>
+  {% if schedule %}
+    <div class="table-wrap">
+      <table class="table table-stack appt-table">
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col">Patient</th>
+            <th scope="col">Doctor</th>
+            <th scope="col">Reason</th>
+            <th scope="col">Status</th>
+            <th scope="col">Reminder</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in schedule %}
+            <tr id="appt-{{ a.pk }}" class="{% if a.status == 'cancelled' %}is-cancelled{% endif %}">
+              <td data-label="Time">
+                <div><strong class="nowrap">{{ a.scheduled_at|time:"g:i a" }}</strong> <span class="subtle small nowrap">{{ a.duration_minutes }} min</span></div>
+              </td>
+              <td data-label="Patient">
+                <div>
+                  <a class="row-link" href="{% url 'patients:detail' a.patient_id %}">{{ a.patient.full_name }}</a>
+                  <div class="small muted">{{ a.patient.mrn }}{% if a.patient.phone %} · <a class="muted" href="tel:{{ a.patient.phone }}">{{ a.patient.phone }}</a>{% endif %}</div>
+                </div>
+              </td>
+              <td data-label="Doctor">{% if a.doctor_name %}{{ a.doctor_name }}{% else %}<span class="subtle">Any doctor</span>{% endif %}</td>
+              <td data-label="Reason">{% if a.reason %}{{ a.reason }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+              <td data-label="Status">
+                <div>
+                  <span class="badge {{ a.status|badge_class }}">{{ a.status|status_label }}</span>
+                  {% if a.status == "reschedule" and a.patient_note %}<div class="small muted appt-note">“{{ a.patient_note }}”</div>{% endif %}
+                </div>
+              </td>
+              <td data-label="Reminder">
+                {% if a.reminder %}<span class="badge {{ a.reminder.status|badge_class }}">{{ a.reminder.get_status_display }}</span>{% elif a.reminder_expected %}<span class="subtle small">Not yet</span>{% else %}<span class="subtle">—</span>{% endif %}
+              </td>
+              <td data-label="" class="appt-actions">
+                <div class="btn-group">
+                  {% appointment_actions a %}
+                  <a class="btn btn-ghost btn-sm" href="{% url 'appointments:update' a.pk %}?next={{ request.get_full_path|urlencode }}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% if selected_doctor %}
+      {% include "includes/empty_state.html" with icon="calendar" title="No appointments for this doctor" text="Nothing booked with this doctor on this day." action_url=book_url action_label="Book appointment" %}
+    {% else %}
+      {% include "includes/empty_state.html" with icon="calendar" title="No appointments on this day" text="Book an appointment, or add a walk-in patient who is here now." action_url=book_url action_label="Book appointment" %}
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/appointments.js' %}" defer></script>{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base_public.html" %}
+{% load static %}
+{% block title %}No access{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+{% block content %}
+<div class="stack-sm">
+  <div class="error-code">Error 403</div>
+  <h1>You don't have access to this page</h1>
+  <p class="muted">Your role at this clinic doesn't include this page. If you need it for your work,
+    ask the clinic owner to change your access.</p>
+  <a class="btn btn-primary btn-block" href="{% url 'core:dashboard' %}">{% include "includes/icon.html" with name="home" %}Go to Today</a>
+</div>
+{% endblock %}

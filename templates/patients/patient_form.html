@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% if patient.pk %}Edit {{ patient.full_name }}{% else %}New patient{% endif %}{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/patients.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs">
+      <a href="{% url 'patients:list' %}">Patients</a><span aria-hidden="true">›</span>
+      {% if patient.pk %}
+        <a href="{{ patient.get_absolute_url }}">{{ patient.full_name }}</a><span aria-hidden="true">›</span><span>Edit</span>
+      {% else %}
+        <span>New patient</span>
+      {% endif %}
+    </div>
+    <h1>{% if patient.pk %}Edit patient{% else %}New patient{% endif %}</h1>
+    <p class="subtitle">
+      {% if patient.pk %}{{ patient.full_name }} · {{ patient.mrn }}{% else %}An MR number is given automatically when you save.{% endif %}
+      Fields marked <span class="text-danger">*</span> are needed.
+    </p>
+  </div>
+</div>
+
+<form method="post" class="form" data-patient-form>
+  {% csrf_token %}
+
+  {% if form.possible_duplicates %}
+    <div class="alert alert-warning" role="alert">
+      {% include "includes/icon.html" with name="alert" %}
+      <div class="stack-sm grow">
+        <strong>This patient may already be registered.</strong>
+        <ul class="duplicate-list">
+          {% for other in form.possible_duplicates %}
+            <li>
+              <a href="{{ other.get_absolute_url }}" target="_blank" rel="noopener">{{ other.full_name }}</a>
+              <span>· {{ other.mrn }}</span>
+              {% if other.age_display %}<span>· {{ other.age_display }}</span>{% endif %}
+              <span>· {{ other.phone }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+        <p class="mb-0">Open them to check (each opens in a new tab). If this really is someone else, tick the box below and save again.</p>
+        {% include "includes/field.html" with field=form.confirm_not_duplicate %}
+      </div>
+    </div>
+  {% elif form.errors %}
+    <div class="alert alert-danger" role="alert">
+      {% include "includes/icon.html" with name="alert" %}
+      <div>Please check the highlighted fields.{% for e in form.non_field_errors %}<br>{{ e }}{% endfor %}</div>
+    </div>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-header"><h2>Personal details</h2></div>
+    <div class="card-body form-grid">
+      {% include "includes/field.html" with field=form.full_name %}
+      {% include "includes/field.html" with field=form.guardian_name %}
+      {% include "includes/field.html" with field=form.sex %}
+      {% include "includes/field.html" with field=form.date_of_birth %}
+      {% include "includes/field.html" with field=form.age_years %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Contact &amp; reminders</h2></div>
+    <div class="card-body form-grid">
+      {% include "includes/field.html" with field=form.phone %}
+      {% include "includes/field.html" with field=form.whatsapp_phone %}
+      {% include "includes/field.html" with field=form.city %}
+      {% include "includes/field.html" with field=form.address %}
+      {% include "includes/field.html" with field=form.reminders_opt_in %}
+    </div>
+  </section>
+
+  {% if form.is_clinician %}
+    <section class="card">
+      <div class="card-header">
+        <h2>Medical (doctors only)</h2>
+        <span class="badge badge-danger">Hidden from reception</span>
+      </div>
+      <div class="card-body form-grid">
+        {% include "includes/field.html" with field=form.blood_group %}
+        {% include "includes/field.html" with field=form.allergies %}
+        {% include "includes/field.html" with field=form.chronic_conditions %}
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card-header"><h2>Notes</h2></div>
+    <div class="card-body form-grid">
+      {% include "includes/field.html" with field=form.notes %}
+    </div>
+  </section>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary" name="next_action" value="save">{% include "includes/icon.html" with name="check" %}Save patient</button>
+    <button type="submit" class="btn btn-secondary" name="next_action" value="book">{% include "includes/icon.html" with name="calendar-plus" %}Save &amp; book appointment</button>
+    <a class="btn btn-ghost" href="{% if patient.pk %}{{ patient.get_absolute_url }}{% else %}{% url 'patients:list' %}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

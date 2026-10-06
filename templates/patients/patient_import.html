@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Import patients{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/patients.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'patients:list' %}">Patients</a><span aria-hidden="true">›</span><span>Import</span></div>
+    <h1>Import patients from a spreadsheet</h1>
+    <p class="subtitle">Move your existing patient register (paper files or Excel) into {{ PRODUCT_NAME }} in one go.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'patients:import_template' %}">{% include "includes/icon.html" with name="download" %}Download template</a>
+  </div>
+</div>
+
+{% if errors %}
+  <section class="card mb-2 import-errors" aria-labelledby="import-errors-title">
+    <div class="card-header">
+      <h2 id="import-errors-title" class="text-danger">{% include "includes/icon.html" with name="alert" %} Nothing was imported</h2>
+      <span class="badge badge-danger">{{ error_rows }} row{{ error_rows|pluralize }} to fix</span>
+    </div>
+    <div class="card-body">
+      <p class="mb-0">Fix these rows in your spreadsheet, save it as CSV UTF-8 again and upload it. Row numbers are the same as in Excel (the column names are row 1).</p>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-compact table-stack">
+        <thead><tr><th scope="col">Row</th><th scope="col">Problem</th></tr></thead>
+        <tbody>
+          {% for row, problem in errors %}
+            <tr><td data-label="Row" class="nowrap">Row {{ row }}</td><td data-label="Problem">{{ problem }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if errors_total > errors|length %}
+      <div class="card-footer muted small">Showing the first {{ errors|length }} of {{ errors_total }} problems.</div>
+    {% endif %}
+  </section>
+{% endif %}
+
+<div class="grid-sidebar">
+  <div class="stack">
+    <section class="card" aria-labelledby="how-title">
+      <div class="card-header"><h2 id="how-title">How it works</h2></div>
+      <div class="card-body">
+        <ol class="import-steps">
+          <li><strong>Download the template</strong> (button above). It is a spreadsheet with the right column names and one made-up example patient.</li>
+          <li><strong>Open it in Excel or Google Sheets.</strong> Keep the first row as it is. Delete the example patient and type your patients underneath: <em>one row per patient</em>.</li>
+          <li><strong>Only three things are needed for each patient:</strong> full name, sex and mobile number. Leave a cell empty if you don't know it.</li>
+          <li><strong>Save it as “CSV UTF-8”.</strong> In Excel: File › Save As › <em>CSV UTF-8 (Comma delimited)</em>. In Google Sheets: File › Download › <em>Comma-separated values</em>.</li>
+          <li><strong>Upload the file below.</strong> We check every row first. If anything needs fixing, <em>nothing</em> is imported and you get a list of the rows to correct, so you never end up with half a register.</li>
+        </ol>
+        <div class="alert alert-info mb-0">
+          {% include "includes/icon.html" with name="info" %}
+          <div>
+            <strong>Moving from paper files?</strong> Start with the patients who come most often. Ask a staff member to type 50–100 files a day into the template, then import each day's batch.
+            Type mobile numbers with a dash (0300-1234567) so Excel keeps the first 0. If your files already have numbers, put them in the <code>mrn</code> column to keep using them.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="upload-title">
+      <div class="card-header"><h2 id="upload-title">Upload your file</h2></div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" class="form">
+          {% csrf_token %}
+          {% include "includes/form_fields.html" with form=form %}
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="upload" %}Check and import</button>
+            <a class="btn btn-ghost" href="{% url 'patients:list' %}">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="columns-title">
+    <div class="card-header"><h2 id="columns-title">Columns</h2></div>
+    <div class="table-wrap">
+      <table class="table table-compact">
+        <thead><tr><th scope="col">Column</th><th scope="col">What to put</th></tr></thead>
+        <tbody>
+          {% for name, required, help in columns %}
+            <tr>
+              <td><code>{{ name }}</code>{% if required %}<span class="text-danger" title="Required">*</span>{% endif %}</td>
+              <td class="small">{% if required %}<strong>Required.</strong> {% endif %}{{ help|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer small muted">Column names can be in any order and any case. Other columns are ignored. Up to {{ max_rows }} patients per file.</div>
+  </section>
+</div>
+{% endblock %}

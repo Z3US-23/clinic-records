@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load static core_tags appointment_tags %}
+
+{% block title %}{{ page_title }}{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/appointments.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'appointments:day' %}">Appointments</a><span aria-hidden="true">›</span><span>{% if is_create %}Book{% else %}Edit{% endif %}</span></div>
+    <h1>{{ page_title }}</h1>
+    {% if is_create %}
+      <p class="subtitle">Step 2 of 2: choose the time. <a href="{% querystring patient=None %}">Change patient</a></p>
+    {% else %}
+      <p class="subtitle">Currently <span class="badge {{ saved.status|badge_class }}">{{ saved.status_label }}</span></p>
+    {% endif %}
+  </div>
+</div>
+
+{% include "includes/patient_banner.html" with patient=patient %}
+
+{% if not is_create and saved.status == "reschedule" %}
+  <div class="alert alert-warning">
+    {% include "includes/icon.html" with name="message" %}
+    <div>
+      <strong>The patient asked for another time{% if saved.patient_responded_at %} ({{ saved.patient_responded_at|date:"j M" }}, {{ saved.patient_responded_at|time:"g:i a" }}){% endif %}.</strong>
+      {% if saved.patient_note %}<div class="pre-line">“{{ saved.patient_note }}”</div>{% endif %}
+      <div class="small">Change the date or time below; the status goes back to “Booked” and the reminder is prepared again.</div>
+    </div>
+  </div>
+{% endif %}
+
+<form method="post" class="card" novalidate>
+  {% csrf_token %}
+  {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+  <div class="card-body form">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger" role="alert">
+        {% include "includes/icon.html" with name="alert" %}
+        <div>{% for error in form.non_field_errors %}{{ error }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div>
+      </div>
+    {% endif %}
+
+    {% if is_create %}
+      <div class="walk-in-box">
+        {% include "includes/field.html" with field=form.walk_in %}
+      </div>
+    {% endif %}
+
+    <div class="form-grid" data-schedule-fields>
+      {% include "includes/field.html" with field=form.date %}
+      {% include "includes/field.html" with field=form.time %}
+    </div>
+
+    <div class="form-grid">
+      {% include "includes/field.html" with field=form.doctor %}
+      {% include "includes/field.html" with field=form.duration_minutes %}
+      <div class="span-2">{% include "includes/field.html" with field=form.reason %}</div>
+      {% if not is_create %}{% include "includes/field.html" with field=form.status %}{% endif %}
+    </div>
+
+    {% if form.clash or form.allow_double_booking.value %}
+      <div class="double-booking-box">
+        {% include "includes/field.html" with field=form.allow_double_booking %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="card-footer form-actions">
+    <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}{{ submit_label }}</button>
+    <a class="btn btn-ghost" href="{{ cancel_url }}">Back</a>
+    {% if not is_create %}
+      <a class="btn btn-ghost appt-preview-link" href="{% url 'public:confirm' appointment.confirm_token %}" target="_blank" rel="noopener noreferrer">{% include "includes/icon.html" with name="link" size="sm" %}Patient's confirmation page</a>
+    {% endif %}
+  </div>
+</form>
+
+{% if not is_create %}
+  <p class="small subtle mt-2">
+    Booked {{ appointment.created_at|date:"j M Y" }}{% if appointment.created_by %} by {{ appointment.created_by.full_name }}{% endif %}.
+    {% if saved.status == "confirmed" and saved.patient_responded_at %}Patient confirmed on {{ saved.patient_responded_at|date:"j M" }} at {{ saved.patient_responded_at|time:"g:i a" }}.{% endif %}
+  </p>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/appointments.js' %}" defer></script>{% endblock %}

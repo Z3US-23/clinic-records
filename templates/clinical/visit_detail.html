@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% load static clinical_tags %}
+
+{% block title %}Visit {{ visit.visit_date|date:"j M Y" }} – {{ patient.full_name }}{% endblock %}
+
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/clinical.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs">
+      <a href="{% url 'patients:list' %}">Patients</a><span>/</span>
+      <a href="{% url 'patients:detail' patient.pk %}">{{ patient.full_name }}</a><span>/</span>
+      <span>Visit</span>
+    </div>
+    <h1>Visit on {{ visit.visit_date|date:"j M Y" }}</h1>
+    <p class="subtitle">{{ visit.visit_date|time:"g:i a" }} · Seen by {{ doctor_name }}</p>
+  </div>
+  <div class="page-actions">
+    {% if can_edit %}
+      <a class="btn btn-secondary" href="{% url 'clinical:visit_update' visit.pk %}">{% include "includes/icon.html" with name="edit" %}Edit</a>
+    {% endif %}
+    <a class="btn btn-secondary" href="{% url 'clinical:lab_create' patient.pk %}?visit={{ visit.pk }}">{% include "includes/icon.html" with name="flask" %}Add lab result</a>
+    <a class="btn btn-primary" href="{% url 'clinical:prescription_print' visit.pk %}">{% include "includes/icon.html" with name="printer" %}Print prescription</a>
+  </div>
+</div>
+
+{% include "includes/patient_banner.html" with patient=patient %}
+
+<div class="grid-sidebar">
+  <div class="stack">
+    {% if vitals %}
+      <section class="card">
+        <div class="card-header"><h2 class="row">{% include "includes/icon.html" with name="heart" %}Vitals</h2></div>
+        <div class="card-body">
+          <div class="vitals-row">
+            {% for vital in vitals %}
+              <div class="vital"><div class="vital-label">{{ vital.label }}</div><div class="vital-value">{{ vital.text }}</div></div>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <div class="card-header"><h2 class="row">{% include "includes/icon.html" with name="clipboard" %}Consultation notes</h2></div>
+      <div class="card-body stack">
+        <div>
+          <h3 class="note-heading">Presenting complaint</h3>
+          <p class="pre-line mb-0">{{ visit.chief_complaint }}</p>
+        </div>
+        {% if visit.history %}
+          <div><h3 class="note-heading">History</h3><p class="pre-line mb-0">{{ visit.history }}</p></div>
+        {% endif %}
+        {% if visit.examination %}
+          <div><h3 class="note-heading">Examination findings</h3><p class="pre-line mb-0">{{ visit.examination }}</p></div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header"><h2>Diagnosis &amp; plan</h2></div>
+      <div class="card-body stack">
+        <div>
+          <h3 class="note-heading">Diagnosis</h3>
+          <p class="mb-0">{% if visit.diagnosis %}<strong>{{ visit.diagnosis }}</strong>{% else %}<span class="muted">Not recorded</span>{% endif %}</p>
+        </div>
+        {% if visit.plan %}
+          <div><h3 class="note-heading">Advice / plan</h3><p class="pre-line mb-0">{{ visit.plan }}</p></div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="row">{% include "includes/icon.html" with name="pill" %}Prescription</h2>
+        {% if items %}<a class="btn btn-ghost btn-sm" href="{% url 'clinical:prescription_print' visit.pk %}">{% include "includes/icon.html" with name="printer" size="sm" %}Print</a>{% endif %}
+      </div>
+      {% if items %}
+        <div class="table-wrap">
+          <table class="table table-compact table-stack">
+            <thead>
+              <tr><th>#</th><th>Medicine</th><th>Dose</th><th>How often</th><th>For how long</th><th>Instructions</th></tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td data-label="#" class="muted">{{ forloop.counter }}</td>
+                  <td data-label="Medicine"><strong>{{ item.medicine }}</strong></td>
+                  <td data-label="Dose">{{ item.dose|default:"—" }}</td>
+                  <td data-label="How often">{{ item.frequency|default:"—" }}</td>
+                  <td data-label="For how long">{{ item.duration|default:"—" }}</td>
+                  <td data-label="Instructions">{{ item.instructions|default:"—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="card-body"><p class="muted mb-0">No medicines prescribed at this visit.</p></div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="row">{% include "includes/icon.html" with name="flask" %}Lab results</h2>
+        <a class="btn btn-ghost btn-sm" href="{% url 'clinical:lab_create' patient.pk %}?visit={{ visit.pk }}">{% include "includes/icon.html" with name="plus" size="sm" %}Add</a>
+      </div>
+      {% if lab_results %}
+        <ul class="list">
+          {% for lab in lab_results %}
+            <li class="list-item">
+              <div class="grow">
+                <div class="title">{{ lab.test_name }} {% if lab.is_abnormal %}<span class="badge badge-danger">Abnormal</span>{% endif %}</div>
+                <div class="meta">{{ lab.result_date|date:"j M Y" }}{% if lab.uploaded_by %} · added by {{ lab.uploaded_by.full_name }}{% endif %}</div>
+                {% if lab.result_text %}<div class="pre-line small mt-1">{{ lab.result_text }}</div>{% endif %}
+              </div>
+              <div class="btn-group">
+                {% if lab.file %}
+                  <a class="btn btn-secondary btn-sm" href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="file" size="sm" %}Open report</a>
+                {% endif %}
+                <form method="post" action="{% url 'clinical:lab_delete' lab.pk %}" class="inline-form" data-confirm="Delete this lab result{% if lab.file %} and its file{% endif %}? This can't be undone.">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-ghost btn-sm" aria-label="Delete lab result {{ lab.test_name }}">{% include "includes/icon.html" with name="trash" size="sm" %}</button>
+                </form>
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="card-body"><p class="muted mb-0">No lab results linked to this visit.</p></div>
+      {% endif %}
+    </section>
+  </div>
+
+  <aside class="stack">
+    <section class="card">
+      <div class="card-header"><h2 class="row">{% include "includes/icon.html" with name="calendar" %}Follow-up</h2></div>
+      <div class="card-body stack-sm">
+        {% if visit.follow_up_date %}
+          <div class="follow-up-date">{{ visit.follow_up_date|date:"D j M Y" }}</div>
+          <p class="muted small mb-0">A WhatsApp reminder is prepared before this date.</p>
+          <a class="btn btn-primary btn-block" href="{% url 'appointments:create' %}?patient={{ patient.pk }}&amp;date={{ visit.follow_up_date|date:'Y-m-d' }}">{% include "includes/icon.html" with name="calendar-plus" %}Book follow-up</a>
+        {% else %}
+          <p class="muted mb-0">No follow-up date set.</p>
+          {% if can_edit %}<a class="btn btn-secondary btn-sm" href="{% url 'clinical:visit_update' visit.pk %}">Set a follow-up date</a>{% endif %}
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header"><h2>Record</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Doctor</dt><dd>{{ doctor_name }}</dd>
+          {% if visit.appointment %}<dt>Appointment</dt><dd>{{ visit.appointment.scheduled_at|date:"j M Y" }}, {{ visit.appointment.scheduled_at|time:"g:i a" }}</dd>{% endif %}
+          <dt>Recorded</dt><dd>{{ visit.created_at|date:"j M Y" }}, {{ visit.created_at|time:"g:i a" }}{% if visit.created_by %} by {{ visit.created_by.full_name }}{% endif %}</dd>
+          {% if visit.updated_at|date:"YmdHi" != visit.created_at|date:"YmdHi" %}<dt>Last changed</dt><dd>{{ visit.updated_at|date:"j M Y" }}, {{ visit.updated_at|time:"g:i a" }}</dd>{% endif %}
+        </dl>
+      </div>
+    </section>
+
+    <a class="btn btn-secondary" href="{% url 'patients:detail' patient.pk %}">{% include "includes/icon.html" with name="user" %}Patient's full history</a>
+  </aside>
+</div>
+{% endblock %}

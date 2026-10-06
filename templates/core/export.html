@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% load static humanize %}
+{% block title %}Export &amp; backup{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'core:dashboard' %}">Today</a><span>/</span><span>Clinic</span></div>
+    <h1>Export &amp; backup</h1>
+    <p class="subtitle">Download a complete copy of {{ current_clinic.name }}'s records.</p>
+  </div>
+</div>
+
+<div class="grid-sidebar">
+  <section class="card" aria-labelledby="contents-title">
+    <div class="card-header"><h2 id="contents-title">What's in the download</h2></div>
+    <div class="card-body">
+      <p>One ZIP file of spreadsheets (CSV files) that open in Excel or Google Sheets, so your records are
+        never locked inside this app. Only your clinic's data is included.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-compact table-stack">
+        <thead><tr><th>File</th><th>What it holds</th><th class="text-right">Rows</th></tr></thead>
+        <tbody>
+          <tr><td data-label="File" class="mono">patients.csv</td><td data-label="What it holds">Patient details, allergies and long-term conditions (archived patients too)</td><td data-label="Rows" class="text-right">{{ counts.patients|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">visits.csv</td><td data-label="What it holds">Every consultation: complaint, vitals, diagnosis, advice and follow-up date</td><td data-label="Rows" class="text-right">{{ counts.visits|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">prescriptions.csv</td><td data-label="What it holds">Each medicine prescribed, with dose, frequency and duration</td><td data-label="Rows" class="text-right">{{ counts.prescriptions|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">lab_results.csv</td><td data-label="What it holds">Test results and which ones were abnormal</td><td data-label="Rows" class="text-right">{{ counts.lab_results|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">appointments.csv</td><td data-label="What it holds">Bookings and what happened (seen, did not come…)</td><td data-label="Rows" class="text-right">{{ counts.appointments|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">reminders.csv</td><td data-label="What it holds">WhatsApp reminders: to send, sent and skipped</td><td data-label="Rows" class="text-right">{{ counts.reminders|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">staff.csv</td><td data-label="What it holds">Staff names, emails and roles (never passwords)</td><td data-label="Rows" class="text-right">{{ counts.staff|intcomma }}</td></tr>
+          <tr><td data-label="File" class="mono">README.txt</td><td data-label="What it holds">When the export was made, row counts and what each column means</td><td data-label="Rows" class="text-right">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="download-title">
+    <div class="card-header"><h2 id="download-title">Download</h2></div>
+    <div class="card-body stack">
+      <div class="alert alert-warning mb-0">
+        {% include "includes/icon.html" with name="alert" %}
+        <div>This file contains private medical records. Keep it on a password-protected or encrypted drive, and never send it over WhatsApp or email.</div>
+      </div>
+
+      <form method="post" class="form">{% csrf_token %}
+        {% include "includes/field.html" with field=form.include_lab_files %}
+        {% if counts.lab_files %}
+          <p class="form-hint mb-0">{{ counts.lab_files|intcomma }} lab report file{{ counts.lab_files|pluralize }} uploaded so far.</p>
+        {% endif %}
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-block">{% include "includes/icon.html" with name="download" %}Download export (ZIP)</button>
+        </div>
+      </form>
+
+      <p class="small muted mb-0">We suggest downloading a backup <strong>once a week</strong> and keeping it somewhere other than this computer.</p>
+      {% if last_export %}
+        <p class="small muted mb-0">Last downloaded {{ last_export.created_at|date:"j M Y" }}, {{ last_export.created_at|time:"g:i a" }}{% if last_export.user %} by {{ last_export.user.full_name }}{% endif %}.</p>
+      {% else %}
+        <p class="small muted mb-0">No export has been downloaded yet.</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

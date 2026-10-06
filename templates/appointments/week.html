@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load static appointment_tags %}
+
+{% block title %}Week of {{ week_start|date:"j M" }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/appointments.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'appointments:day' %}">Appointments</a><span aria-hidden="true">›</span><span>Week</span></div>
+    <h1>Week of {{ week_start|date:"j M Y" }}</h1>
+    <p class="subtitle">
+      {{ week_start|date:"j M" }} – {{ week_end|date:"j M Y" }} · {{ total }} appointment{{ total|pluralize }}{% if selected_doctor %} with {{ selected_doctor_name }}{% endif %}
+    </p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'appointments:day' %}{% if selected_doctor %}?doctor={{ selected_doctor.pk }}{% endif %}">{% include "includes/icon.html" with name="clock" %}Today's list</a>
+    <a class="btn btn-primary" href="{% url 'appointments:create' %}">{% include "includes/icon.html" with name="calendar-plus" %}Book appointment</a>
+  </div>
+</div>
+
+<div class="toolbar appt-toolbar">
+  <div class="btn-group" role="group" aria-label="Change week">
+    <a class="btn btn-secondary" href="{% querystring start=prev_week %}" title="Previous week" aria-label="Previous week">{% include "includes/icon.html" with name="chevron-left" %}</a>
+    <a class="btn btn-secondary" href="{% querystring start=None %}"{% if is_this_week %} aria-current="date"{% endif %}>This week</a>
+    <a class="btn btn-secondary" href="{% querystring start=next_week %}" title="Next week" aria-label="Next week">{% include "includes/icon.html" with name="chevron-right" %}</a>
+  </div>
+  {% if doctor_options|length > 1 or selected_doctor %}
+    <form method="get" class="appt-filter" action="{% url 'appointments:week' %}">
+      <input type="hidden" name="start" value="{{ week_start|date:'Y-m-d' }}">
+      <select name="doctor" aria-label="Doctor" data-auto-submit>
+        <option value="">All doctors</option>
+        {% for option in doctor_options %}
+          <option value="{{ option.id }}"{% if selected_doctor and option.id == selected_doctor.pk %} selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary">Show</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="week-grid">
+  {% for d in days %}
+    <section class="card week-day{% if d.is_today %} is-today{% endif %}" aria-label="{{ d.date|date:'l j F' }}">
+      <a class="card-header week-day-header" href="{{ d.url }}">
+        <span>
+          <span class="week-day-name">{{ d.date|date:"l" }}{% if d.is_today %} · Today{% endif %}</span>
+          <span class="week-day-date">{{ d.date|date:"j M" }}</span>
+        </span>
+        <span class="badge {% if d.count %}badge-primary{% else %}badge-muted{% endif %}" title="Appointments (not counting cancelled)">{{ d.count }}</span>
+      </a>
+      {% if d.appointments %}
+        <ul class="week-list">
+          {% for a in d.appointments %}
+            <li class="week-item{% if a.status == 'cancelled' %} is-cancelled{% endif %}">
+              <a href="{{ d.url }}#appt-{{ a.pk }}" title="{{ a.status|status_label }}">
+                <span class="status-dot status-{{ a.status }}" aria-hidden="true"></span>
+                <span class="time">{{ a.scheduled_at|time:"g:i a" }}</span>
+                <span class="name truncate">{{ a.patient.full_name }}</span>
+                <span class="visually-hidden">({{ a.status|status_label }})</span>
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="week-empty">No appointments</p>
+      {% endif %}
+    </section>
+  {% endfor %}
+</div>
+
+<div class="appt-legend mt-2" aria-hidden="true">
+  {% for value, text in status_legend %}<span><span class="status-dot status-{{ value }}"></span>{{ text }}</span>{% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/appointments.js' %}" defer></script>{% endblock %}

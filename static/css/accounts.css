@@ -1,0 +1,25 @@
+/* Accounts pages (staff, profile, clinic settings). Builds on app.css tokens. */
+
+/* Card titles with a leading icon */
+.card-title-icon { display: inline-flex; align-items: center; gap: 8px; }
+.card-title-icon .icon { color: var(--text-muted); }
+
+/* Staff table: avatar + name */
+.staff-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.staff-person strong { margin-right: 4px; }
+
+/* "Who can do what" list: badge column + description */
+.role-guide { row-gap: 12px; align-items: start; }
+.role-guide dd { font-weight: 400; color: var(--text-muted); }
+
+/* How a doctor's name prints on prescriptions */
+.prescription-preview {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+@media (max-width: 520px) {
+  .role-guide { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+  .role-guide dd { margin-bottom: 8px; }
+}

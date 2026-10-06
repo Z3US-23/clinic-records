@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Add staff member{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <div class="breadcrumbs"><a href="{% url 'accounts:staff_list' %}">Staff</a><span>›</span><span>Add</span></div>
+      <h1>Add staff member</h1>
+      <p class="subtitle">They will sign in with their email and the password you choose here.</p>
+    </div>
+  </div>
+
+  <form method="post" class="stack">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for e in form.non_field_errors %}{{ e }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-header"><h2>Who they are</h2></div>
+      <div class="card-body">
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.full_name %}
+          {% include "includes/field.html" with field=form.email %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Role</h2></div>
+      <div class="card-body stack">
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.role %}
+          {% include "includes/field.html" with field=form.title %}
+          {% include "includes/field.html" with field=form.qualifications %}
+          {% include "includes/field.html" with field=form.registration_number %}
+        </div>
+        <p class="form-hint mb-0">{% include "includes/icon.html" with name="info" size="sm" %} Receptionists can manage patients' contact details, appointments and reminders, but cannot see clinical notes, prescriptions, lab results or allergies.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Password for their first sign-in</h2></div>
+      <div class="card-body stack">
+        <p class="form-hint mb-0">If they already use {{ PRODUCT_NAME }} at another clinic, leave this blank: they keep their existing password.</p>
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.password1 %}
+          {% include "includes/field.html" with field=form.password2 %}
+        </div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="user-plus" %}Add staff member</button>
+      <a class="btn btn-ghost" href="{% url 'accounts:staff_list' %}">Cancel</a>
+    </div>
+  </form>
+{% endblock %}

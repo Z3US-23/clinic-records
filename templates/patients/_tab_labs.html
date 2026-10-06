@@ -1,0 +1,35 @@
+{% comment %}
+"Lab results" tab (clinicians only). Expects: patient, lab_results.
+{% endcomment %}
+<section class="card">
+  <div class="card-header">
+    <h2>Lab results</h2>
+    <a class="btn btn-secondary btn-sm" href="{% url 'clinical:lab_create' patient.pk %}">{% include "includes/icon.html" with name="plus" size="sm" %}Add lab result</a>
+  </div>
+  {% if lab_results %}
+    <div class="table-wrap">
+      <table class="table table-stack">
+        <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Report</th></tr></thead>
+        <tbody>
+          {% for lab in lab_results %}
+            <tr>
+              <td data-label="Date" class="nowrap">{{ lab.result_date|date:"j M Y" }}</td>
+              <td data-label="Test">
+                <strong>{{ lab.test_name }}</strong>
+                {% if lab.is_abnormal %}<span class="badge badge-danger">Abnormal</span>{% endif %}
+                {% if lab.visit_id %}<div class="small"><a href="{% url 'clinical:visit_detail' lab.visit_id %}">From visit on {{ lab.visit.visit_date|date:"j M Y" }}</a></div>{% endif %}
+              </td>
+              <td data-label="Result" class="lab-result-cell">{% if lab.result_text %}<span class="pre-line">{{ lab.result_text|truncatechars:160 }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+              <td data-label="Report" class="nowrap">
+                {% if lab.file %}<a href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="file" size="sm" %} View</a>{% else %}<span class="subtle">No file</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% url 'clinical:lab_create' patient.pk as lab_url %}
+    {% include "includes/empty_state.html" with icon="flask" title="No lab results yet" text="Add test results or upload a photo / PDF of the report." action_url=lab_url action_label="Add lab result" %}
+  {% endif %}
+</section>

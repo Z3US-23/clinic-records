@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Audit log{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'core:dashboard' %}">Today</a><span>/</span><span>Clinic</span></div>
+    <h1>Audit log</h1>
+    <p class="subtitle">Who opened or changed records at {{ current_clinic.name }}.</p>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  {% include "includes/icon.html" with name="shield" %}
+  <div>
+    Every time someone at your clinic opens a patient's file, adds or changes a record, sends a reminder,
+    imports or exports data, or signs in, it is written here with the time, the staff member and their
+    internet (IP) address. Medical records are private: this log lets you check that only the right people
+    looked at them, and answer a patient who asks who saw their file. Entries cannot be edited or deleted.
+  </div>
+</div>
+
+<form method="get" class="toolbar filter-bar" aria-label="Filter the audit log">
+  <div class="field">
+    <label for="{{ form.user.id_for_label }}">{{ form.user.label }}</label>
+    {{ form.user }}
+  </div>
+  <div class="field">
+    <label for="{{ form.action.id_for_label }}">{{ form.action.label }}</label>
+    {{ form.action }}
+  </div>
+  <div class="field">
+    <label for="{{ form.date_from.id_for_label }}">{{ form.date_from.label }}</label>
+    {{ form.date_from }}
+  </div>
+  <div class="field">
+    <label for="{{ form.date_to.id_for_label }}">{{ form.date_to.label }}</label>
+    {{ form.date_to }}
+  </div>
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="search" size="sm" %}Filter</button>
+    {% if is_filtered %}<a class="btn btn-ghost" href="{% url 'core:audit_log' %}">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="card">
+  {% if page_obj.object_list %}
+  <div class="table-wrap">
+    <table class="table table-compact table-stack">
+      <thead>
+        <tr><th>Time</th><th>Staff member</th><th>Action</th><th>Record</th><th>Details</th><th>IP address</th></tr>
+      </thead>
+      <tbody>
+        {% for entry in page_obj %}
+        <tr>
+          <td data-label="Time" class="nowrap">{{ entry.created_at|date:"j M Y" }}, {{ entry.created_at|time:"g:i a" }}</td>
+          <td data-label="Staff member">{{ entry.user.full_name|default:"—" }}</td>
+          <td data-label="Action"><span class="badge {{ entry.badge }}">{{ entry.get_action_display }}</span></td>
+          <td data-label="Record" class="nowrap">{% if entry.object_label %}{{ entry.object_label }}{% if entry.object_id %} #{{ entry.object_id }}{% endif %}{% else %}—{% endif %}</td>
+          <td data-label="Details">{{ entry.summary|default:"—" }}</td>
+          <td data-label="IP address" class="mono small">{{ entry.ip_address|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "includes/pagination.html" %}
+  {% else %}
+    {% if is_filtered %}
+      {% include "includes/empty_state.html" with icon="search" title="No matching entries" text="Try a different staff member, action or date range." %}
+    {% else %}
+      {% include "includes/empty_state.html" with icon="shield" title="Nothing recorded yet" text="Entries appear here as soon as staff start using the app." %}
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

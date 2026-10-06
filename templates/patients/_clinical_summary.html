@@ -1,0 +1,78 @@
+{% comment %}
+Clinical summary card on the patient profile. Included for clinicians only (the view builds
+`summary` only for them). Expects: patient, summary (see apps.patients.services.clinical_summary).
+{% endcomment %}
+<section class="card mb-2 clinical-summary" aria-labelledby="clinical-summary-title">
+  <div class="card-header">
+    <h2 id="clinical-summary-title">{% include "includes/icon.html" with name="heart" %} Clinical summary</h2>
+    <span class="subtle small">Doctors only</span>
+  </div>
+  <div class="card-body stack">
+    {% if patient.allergies %}
+      <div class="allergy-banner">{% include "includes/icon.html" with name="alert" %}<span>Allergies: <span class="pre-line">{{ patient.allergies }}</span></span></div>
+    {% else %}
+      <p class="mb-0 text-success">{% include "includes/icon.html" with name="check" size="sm" %} No known allergies</p>
+    {% endif %}
+
+    <div class="summary-grid">
+      <div class="summary-block">
+        <h3>Long-term conditions</h3>
+        {% if patient.chronic_conditions %}<p class="pre-line mb-1">{{ patient.chronic_conditions }}</p>{% else %}<p class="subtle mb-1">None recorded</p>{% endif %}
+        <p class="mb-0"><span class="muted">Blood group:</span> {% if patient.blood_group %}<strong>{{ patient.blood_group }}</strong>{% else %}<span class="subtle">Not recorded</span>{% endif %}</p>
+      </div>
+
+      <div class="summary-block">
+        <h3>Latest vitals</h3>
+        {% if summary.vitals %}
+          <ul class="vitals-list">
+            {% for reading in summary.vitals %}<li>{{ reading }}</li>{% endfor %}
+          </ul>
+          <p class="subtle small mb-0">From visit on <a href="{% url 'clinical:visit_detail' summary.vitals_visit.pk %}">{{ summary.vitals_visit.visit_date|date:"j M Y" }}</a></p>
+        {% else %}
+          <p class="subtle mb-0">No vitals recorded yet</p>
+        {% endif %}
+      </div>
+
+      <div class="summary-block">
+        <h3>Current medicines</h3>
+        {% if summary.medicines %}
+          <ul class="medicine-list">
+            {% for item in summary.medicines %}
+              <li><strong>{{ item.medicine }}</strong>{% if item.dose or item.frequency or item.duration %} <span class="muted">— {{ item.dose }}{% if item.dose and item.frequency %}, {% endif %}{{ item.frequency }}{% if item.duration %} for {{ item.duration }}{% endif %}</span>{% endif %}</li>
+            {% endfor %}
+          </ul>
+          <p class="subtle small mb-0">From visit on <a href="{% url 'clinical:visit_detail' summary.medicines_visit.pk %}">{{ summary.medicines_visit.visit_date|date:"j M Y" }}</a></p>
+        {% else %}
+          <p class="subtle mb-0">No medicines prescribed yet</p>
+        {% endif %}
+      </div>
+
+      <div class="summary-block">
+        <h3>Follow-up</h3>
+        {% with follow=summary.follow_up %}
+          {% if follow %}
+            <p class="mb-1">
+              {% if follow.state == "overdue" %}
+                <span class="badge badge-danger">Overdue</span> Was due {{ follow.due|date:"j M Y" }}
+              {% elif follow.state == "booked" %}
+                <span class="badge badge-success">Booked</span> {{ follow.appointment.scheduled_at|date:"j M Y" }}, {{ follow.appointment.scheduled_at|time:"g:i a" }}
+              {% else %}
+                <span class="badge badge-info">Due</span> {{ follow.due|date:"j M Y" }}
+              {% endif %}
+            </p>
+            <p class="subtle small mb-0">
+              Set at the visit on {{ summary.latest_visit.visit_date|date:"j M Y" }}{% if follow.state == "booked" %} (follow-up date {{ follow.due|date:"j M Y" }}){% endif %}
+            </p>
+            {% if follow.state == "overdue" and not patient.is_archived %}
+              <a class="btn btn-secondary btn-sm mt-1" href="{% url 'appointments:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="calendar-plus" size="sm" %}Book follow-up</a>
+            {% endif %}
+          {% elif summary.latest_visit %}
+            <p class="subtle mb-0">No follow-up date at the last visit ({{ summary.latest_visit.visit_date|date:"j M Y" }})</p>
+          {% else %}
+            <p class="subtle mb-0">No visits yet</p>
+          {% endif %}
+        {% endwith %}
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load core_tags %}
+{% block title %}{{ membership.user.full_name }} · Staff{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <div class="breadcrumbs"><a href="{% url 'accounts:staff_list' %}">Staff</a><span>›</span><span>{{ membership.user.full_name }}</span></div>
+      <div class="row">
+        <span class="avatar avatar-lg">{{ membership.user.full_name|initials }}</span>
+        <div>
+          <h1>{{ membership.user.full_name }}</h1>
+          <p class="subtitle">{{ membership.user.email }}</p>
+        </div>
+      </div>
+    </div>
+    {% if membership.pk != current_membership.pk %}
+      <div class="page-actions">
+        <a class="btn btn-secondary" href="{% url 'accounts:staff_set_password' membership.pk %}">{% include "includes/icon.html" with name="shield" %}Set a new password</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <form method="post" class="stack">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for e in form.non_field_errors %}{{ e }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-header"><h2>Role</h2></div>
+      <div class="card-body">
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.role %}
+          {% include "includes/field.html" with field=form.title %}
+          {% include "includes/field.html" with field=form.qualifications %}
+          {% include "includes/field.html" with field=form.registration_number %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Access</h2></div>
+      <div class="card-body">
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.is_active %}
+        </div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save changes</button>
+      <a class="btn btn-ghost" href="{% url 'accounts:staff_list' %}">Cancel</a>
+    </div>
+  </form>
+{% endblock %}

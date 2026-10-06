@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+{% block title %}Staff{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/accounts.css' %}">{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Staff</h1>
+      <p class="subtitle">People who can sign in to {{ current_clinic.name }}.</p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="{% url 'accounts:staff_add' %}">{% include "includes/icon.html" with name="user-plus" %}Add staff member</a>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="table-wrap">
+        <table class="table table-stack">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Qualifications</th>
+              <th>Access</th>
+              <th>Last sign-in</th>
+              <th aria-label="Actions"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in memberships %}
+              <tr>
+                <td data-label="Name">
+                  <div class="staff-person">
+                    <span class="avatar avatar-sm">{{ m.user.full_name|initials }}</span>
+                    <span>
+                      <strong>{{ m.display_name }}</strong>
+                      {% if m.pk == current_membership.pk %}<span class="badge badge-muted">You</span>{% endif %}
+                    </span>
+                  </div>
+                </td>
+                <td data-label="Email"><span class="truncate">{{ m.user.email }}</span></td>
+                <td data-label="Role"><span class="badge {{ m.role|badge_class }}">{{ m.get_role_display }}</span></td>
+                <td data-label="Qualifications">{{ m.qualifications|default:"—" }}</td>
+                <td data-label="Access">
+                  {% if m.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}
+                </td>
+                <td data-label="Last sign-in" class="nowrap">
+                  {% if m.user.last_login %}{{ m.user.last_login|date:"j M Y" }}{% else %}<span class="subtle">Never</span>{% endif %}
+                </td>
+                <td data-label="" class="text-right nowrap">
+                  <a class="btn btn-secondary btn-sm" href="{% url 'accounts:staff_edit' m.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Who can do what</h2></div>
+      <div class="card-body">
+        <dl class="kv role-guide">
+          <dt><span class="badge {{ 'owner'|badge_class }}">Clinic owner</span></dt>
+          <dd>Everything a doctor can do, plus adding staff, clinic settings, message templates, export &amp; backup and the audit log.</dd>
+          <dt><span class="badge {{ 'doctor'|badge_class }}">Doctor</span></dt>
+          <dd>Patients, appointments and reminders, plus clinical notes: visits, prescriptions, lab results and allergies.</dd>
+          <dt><span class="badge {{ 'receptionist'|badge_class }}">Receptionist</span></dt>
+          <dd>Patients' contact details, appointments and WhatsApp reminders. Receptionists <strong>cannot</strong> see clinical notes, prescriptions, lab results or allergies.</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+{% endblock %}

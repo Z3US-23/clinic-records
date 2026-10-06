@@ -12,12 +12,19 @@ Action = AuditLog.Action
 
 
 def get_client_ip(request):
+    """The visitor's IP address, for the audit log and the sign-in lockout.
+
+    Behind a proxy (settings.USE_X_FORWARDED_FOR) each trusted proxy appends the address
+    it saw to X-Forwarded-For, so the real client is TRUSTED_PROXY_COUNT places from the
+    right. Anything further left was sent by the visitor and can be made up.
+    """
     if request is None:
         return None
     if getattr(settings, "USE_X_FORWARDED_FOR", False):
-        forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip() or None
+        hops = [part.strip() for part in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",") if part.strip()]
+        proxies = max(1, getattr(settings, "TRUSTED_PROXY_COUNT", 1))
+        if len(hops) >= proxies:
+            return hops[-proxies]
     return request.META.get("REMOTE_ADDR") or None
 
 

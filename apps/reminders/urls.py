@@ -1,14 +1,14 @@
 from django.urls import path
 
-from apps.core.placeholders import placeholder
+from . import views
 
 app_name = "reminders"
 
 urlpatterns = [
-    path("", placeholder, name="list"),
-    path("new/", placeholder, name="create"),
-    path("templates/", placeholder, name="templates"),
-    path("<int:pk>/send/", placeholder, name="send"),
-    path("<int:pk>/skip/", placeholder, name="skip"),
-    path("<int:pk>/edit/", placeholder, name="update"),
+    path("", views.ReminderListView.as_view(), name="list"),
+    path("new/", views.CustomReminderCreateView.as_view(), name="create"),
+    path("templates/", views.MessageTemplatesView.as_view(), name="templates"),
+    path("<int:pk>/send/", views.SendReminderView.as_view(), name="send"),
+    path("<int:pk>/skip/", views.SkipReminderView.as_view(), name="skip"),
+    path("<int:pk>/edit/", views.ReminderUpdateView.as_view(), name="update"),
 ]

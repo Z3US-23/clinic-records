@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Book appointment{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/appointments.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'appointments:day' %}">Appointments</a><span aria-hidden="true">›</span><span>Book</span></div>
+    <h1>Book appointment</h1>
+    <p class="subtitle">Step 1 of 2: choose the patient{% if day %} for {{ day|date:"l, j M Y" }}{% endif %}.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'patients:create' %}">{% include "includes/icon.html" with name="user-plus" %}New patient</a>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-body">
+    <form method="get" class="picker-search" role="search">
+      {% if day %}<input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">{% endif %}
+      {% if request.GET.doctor %}<input type="hidden" name="doctor" value="{{ request.GET.doctor }}">{% endif %}
+      <label for="picker-q" class="visually-hidden">Find patient</label>
+      <input id="picker-q" type="search" name="q" value="{{ query }}" placeholder="Name, phone or MR no." autocomplete="off" autofocus>
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="search" %}Search</button>
+    </form>
+  </div>
+
+  <div class="card-header picker-results-header">
+    <h2>{% if query %}Patients matching “{{ query }}”{% else %}Recent patients{% endif %}</h2>
+    {% if patients %}<span class="subtle small">{{ patients|length }} shown</span>{% endif %}
+  </div>
+
+  {% if patients %}
+    <div class="table-wrap">
+      <table class="table table-stack picker-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">MR no.</th>
+            <th scope="col">Phone</th>
+            <th scope="col">Age / sex</th>
+            <th scope="col"><span class="visually-hidden">Choose</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in patients %}
+            <tr>
+              <td data-label="Name"><strong>{{ p.full_name }}</strong></td>
+              <td data-label="MR no.">{{ p.mrn }}</td>
+              <td data-label="Phone">{{ p.phone|default:"—" }}</td>
+              <td data-label="Age / sex">{% if p.age_display %}{{ p.age_display }} · {% endif %}{{ p.get_sex_display }}</td>
+              <td data-label="" class="text-right">
+                <a class="btn btn-primary btn-sm" href="{% querystring patient=p.pk q=None %}">Choose{% include "includes/icon.html" with name="arrow-right" size="sm" %}</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% url 'patients:create' as new_patient_url %}
+    {% if query %}
+      {% include "includes/empty_state.html" with icon="search" title="No patient found" text="Check the spelling or phone number, or add them as a new patient." action_url=new_patient_url action_label="New patient" %}
+    {% else %}
+      {% include "includes/empty_state.html" with icon="users" title="No patients yet" text="Add the patient first, then book their appointment." action_url=new_patient_url action_label="New patient" %}
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

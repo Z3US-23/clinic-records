@@ -16,12 +16,17 @@ that clinic A can never see clinic B's data:
 
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from apps.accounts.models import Clinic, Membership, User
 
 TEST_PASSWORD = "test-pass-12345"
+
+# The real password hasher is slow on purpose (seconds per password on a laptop).
+# Tests create several users per class, so they use a fast one. Tests only: the
+# production setting in config/settings.py is never changed.
+FAST_PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 
 def make_clinic(name="Test Clinic", **kwargs):
@@ -69,6 +74,7 @@ def make_appointment(patient, doctor=None, when=None, **kwargs):
     )
 
 
+@override_settings(PASSWORD_HASHERS=FAST_PASSWORD_HASHERS)
 class ClinicTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):

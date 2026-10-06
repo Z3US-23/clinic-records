@@ -1,0 +1,13 @@
+{% extends "base_public.html" %}
+{% load static %}
+{% block title %}Page not found{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+{% block content %}
+<div class="stack-sm">
+  <div class="error-code">Error 404</div>
+  <h1>We couldn't find that page</h1>
+  <p class="muted">The link may be out of date, or the address may have been typed incorrectly.
+    If you followed a link inside the app, go back and try again.</p>
+  <a class="btn btn-primary btn-block" href="{% url 'core:dashboard' %}">{% include "includes/icon.html" with name="home" %}Go to Today</a>
+</div>
+{% endblock %}

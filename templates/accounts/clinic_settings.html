@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Clinic settings{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/accounts.css' %}">{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Clinic settings</h1>
+      <p class="subtitle">Your clinic's details, reminder timing and printed prescriptions.</p>
+    </div>
+  </div>
+
+  <form method="post" class="stack">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for e in form.non_field_errors %}{{ e }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+    {% elif form.errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>Please correct the highlighted fields below.</div></div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-header"><h2 class="card-title-icon">{% include "includes/icon.html" with name="home" %}Clinic details</h2></div>
+      <div class="card-body stack">
+        <p class="form-hint mb-0">Patients see the clinic name and phone in WhatsApp reminders and on printed prescriptions.</p>
+        <div class="form-grid">
+          <div class="span-2">{% include "includes/field.html" with field=form.name %}</div>
+          <div class="span-2">{% include "includes/field.html" with field=form.address %}</div>
+          {% include "includes/field.html" with field=form.city %}
+          {% include "includes/field.html" with field=form.phone %}
+          {% include "includes/field.html" with field=form.email %}
+          {% include "includes/field.html" with field=form.country %}
+          {% include "includes/field.html" with field=form.timezone %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2 class="card-title-icon">{% include "includes/icon.html" with name="bell" %}Reminders</h2></div>
+      <div class="card-body stack">
+        <p class="form-hint mb-0">Each day the app prepares WhatsApp reminders using these rules. Staff send them with one tap from the Reminders page.</p>
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.appointment_reminder_days %}
+          {% include "includes/field.html" with field=form.followup_reminder_days %}
+          {% include "includes/field.html" with field=form.overdue_grace_days %}
+          {% include "includes/field.html" with field=form.default_appointment_minutes %}
+        </div>
+        {% if is_owner %}
+          <p class="form-hint mb-0">To change the wording of the messages, go to <a href="{% url 'reminders:templates' %}">Message templates</a>.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2 class="card-title-icon">{% include "includes/icon.html" with name="printer" %}Printed prescriptions</h2></div>
+      <div class="card-body stack">
+        <p class="form-hint mb-0">Letterhead lines appear under the clinic name at the top of each printed prescription, and the footer at the bottom. Doctors set their own qualifications and registration number in <a href="{% url 'accounts:profile' %}">their profile</a>.</p>
+        <div class="form-grid">
+          {% include "includes/field.html" with field=form.prescription_header %}
+          {% include "includes/field.html" with field=form.prescription_footer %}
+        </div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save settings</button>
+    </div>
+  </form>
+{% endblock %}

@@ -195,9 +195,34 @@ if not DEBUG:
 
 SESSION_COOKIE_HTTPONLY = True
 
+# Behind a hosting platform's proxy (Render, Railway, Heroku, nginx) every request
+# arrives from the proxy's address. Turn this on there so the audit log and the
+# failed-sign-in lockout see each person's real IP address. Leave it OFF when the
+# app is reached directly: then the header could be faked by anyone.
+USE_X_FORWARDED_FOR = env_bool("DJANGO_USE_X_FORWARDED_FOR", False)
+# How many trusted proxies add themselves to X-Forwarded-For. The client's address
+# is read that many places from the RIGHT, because the left end can be faked.
+TRUSTED_PROXY_COUNT = int(env("DJANGO_TRUSTED_PROXY_COUNT", "1"))
+
 # --- Misc -------------------------------------------------------------------
 
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+def _cache_config(url):
+    """DJANGO_CACHE_URL: empty = in-memory (one computer), "db" = database table, redis://... = Redis.
+
+    The failed-sign-in lockout counts attempts in this cache, so in production every
+    server process must share it: use "db" (run `manage.py createcachetable` once) or Redis.
+    """
+    if not url:
+        return {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
+    if url in {"db", "database"}:
+        return {"BACKEND": "django.core.cache.backends.db.DatabaseCache", "LOCATION": "django_cache"}
+    if url.startswith(("redis://", "rediss://")):
+        return {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": url}
+    raise ImproperlyConfigured('DJANGO_CACHE_URL must be empty, "db", or a redis:// URL.')
+
+
+CACHES = {"default": _cache_config(env("DJANGO_CACHE_URL", "").strip())}
 
 EMAIL_BACKEND = env("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 

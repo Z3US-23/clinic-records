@@ -1,14 +1,15 @@
 from django.urls import path
 
-from .placeholders import placeholder
+from . import views
 
 app_name = "core"
 
 urlpatterns = [
-    path("", placeholder, name="dashboard"),
-    path("audit-log/", placeholder, name="audit_log"),
-    path("export/", placeholder, name="export"),
-    path("manifest.webmanifest", placeholder, name="manifest"),
-    path("sw.js", placeholder, name="service_worker"),
-    path("offline/", placeholder, name="offline"),
+    path("", views.dashboard, name="dashboard"),
+    path("audit-log/", views.audit_log, name="audit_log"),
+    path("export/", views.export_data, name="export"),
+    # Installable app (PWA). The service worker is served from the site root so it controls every page.
+    path("manifest.webmanifest", views.manifest, name="manifest"),
+    path("sw.js", views.service_worker, name="service_worker"),
+    path("offline/", views.offline, name="offline"),
 ]

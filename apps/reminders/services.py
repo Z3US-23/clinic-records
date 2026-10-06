@@ -1,4 +1,17 @@
-"""Reminder generation and message rendering. (Stub — implemented by the reminders feature.)
+"""Reminder generation and message rendering.
+
+How reminders work
+------------------
+The app *prepares* WhatsApp messages and staff send each one with a single tap
+(see `views.SendReminderView` and `channels.WhatsAppLinkChannel`). Three kinds
+of reminder are prepared automatically:
+
+* APPOINTMENT - a few days before an appointment (`clinic.appointment_reminder_days`).
+* FOLLOW_UP   - a few days before a visit's `follow_up_date` (`clinic.followup_reminder_days`).
+* OVERDUE     - the follow-up date passed `clinic.overdue_grace_days` ago and the
+                patient has not come back or booked an appointment.
+
+Staff can also write a CUSTOM message to one patient.
 
 Public API used by other apps:
     generate_reminders(clinic, today=None) -> int
@@ -7,16 +20,579 @@ Public API used by other apps:
         Call after an appointment is created, edited or changes status.
     refresh_for_visit(visit) -> None
         Call after a visit is created or its follow_up_date changes.
+
+Other helpers (used by this app's views and tests):
+    DEFAULT_TEMPLATES, PLACEHOLDERS, render_message(), get_template_body(),
+    MessageBuilder, sample_context(), unknown_placeholders()
 """
+
+import re
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from django.conf import settings
+from django.db import IntegrityError, models, transaction
+from django.db.models import Exists, OuterRef, Q, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
+
+from apps.accounts.models import Membership
+from apps.appointments.models import Appointment
+from apps.clinical.models import Visit
+
+from .models import MessageTemplate, Reminder, ReminderKind
+
+# --- Rules -------------------------------------------------------------------
+
+# Missed follow-ups older than this are not chased any more.
+OVERDUE_LOOKBACK_DAYS = 60
+
+# Only appointments in these states get a reminder. ("Wants another time" waits
+# until staff reschedule it; arrived / seen / cancelled / did-not-come need none.)
+REMINDABLE_STATUSES = (Appointment.Status.SCHEDULED, Appointment.Status.CONFIRMED)
+
+# Appointments in these states do not count as "the patient has booked".
+NOT_COMING_STATUSES = (Appointment.Status.CANCELLED, Appointment.Status.NO_SHOW)
+
+# Reminder kinds that belong to a visit's follow-up date.
+VISIT_KINDS = (ReminderKind.FOLLOW_UP, ReminderKind.OVERDUE)
+
+# Wording used when a value is missing.
+DOCTOR_FALLBACK = "the doctor"
+CLINIC_PHONE_FALLBACK = "the clinic"
+
+# --- Message templates -------------------------------------------------------
+
+DEFAULT_TEMPLATES = {
+    ReminderKind.APPOINTMENT: (
+        "Hello {first_name}, this is a reminder of your appointment at {clinic_name} "
+        "with {doctor_name} on {date} at {time}.\n"
+        "\n"
+        "Tap to confirm or ask for another time: {confirm_link}\n"
+        "\n"
+        "Questions? Call {clinic_phone}."
+    ),
+    ReminderKind.FOLLOW_UP: (
+        "Hello {first_name}, it is almost time to come back to {clinic_name} "
+        "for your follow-up check-up, around {date}.\n"
+        "\n"
+        "Please reply to this message or call {clinic_phone} to book a time that suits you."
+    ),
+    ReminderKind.OVERDUE: (
+        "Hello {first_name}, your follow-up check-up at {clinic_name} was due on {date}. "
+        "We hope you are feeling well.\n"
+        "\n"
+        "Coming back helps {doctor_name} check that your treatment is working. "
+        "Please reply to this message or call {clinic_phone} to book a time."
+    ),
+    ReminderKind.CUSTOM: "Hello {first_name}, ",
+}
+
+# The only names that are ever replaced in a template, with help text for the editor.
+PLACEHOLDERS = {
+    "patient_name": "Patient's full name",
+    "first_name": "Patient's first name",
+    "clinic_name": "Your clinic's name",
+    "clinic_phone": "Your clinic's phone number (from Clinic settings)",
+    "doctor_name": 'The doctor\'s name, e.g. "Dr. Sana Iqbal" ("the doctor" if none is chosen)',
+    "date": "Appointment date, follow-up date, or the date the follow-up was due",
+    "time": "Appointment time (appointment reminders only)",
+    "confirm_link": "Link the patient taps to confirm or ask for another time (appointment reminders only)",
+}
+
+# A placeholder is exactly "{" + lowercase name + "}". Nothing else is touched.
+_PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+# Anything that looks like a placeholder, for warnings in the template editor.
+_BRACED_RE = re.compile(r"\{[^{}\n]{0,40}\}")
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def render_message(body, context):
+    """Fill the {placeholders} in a template typed by clinic staff.
+
+    Safe by design (unlike str.format): only the plain names in PLACEHOLDERS are
+    replaced. Unknown names ({patient}), attribute or index access
+    ({first_name.__class__}, {first_name[0]}), format specs ({date:>10}) and stray
+    braces are left exactly as typed. Never raises.
+    """
+    if not body:
+        return ""
+
+    def replace(match):
+        name = match.group(1)
+        if name in PLACEHOLDERS and name in context:
+            value = context[name]
+            return "" if value is None else str(value)
+        return match.group(0)
+
+    return _PLACEHOLDER_RE.sub(replace, str(body))
+
+
+def unknown_placeholders(body):
+    """Things in braces that will NOT be filled in, e.g. ['{patient}'] (for editor warnings)."""
+    found = []
+    for token in _BRACED_RE.findall(body or ""):
+        name = token[1:-1]
+        if name not in PLACEHOLDERS and token not in found:
+            found.append(token)
+    return found
+
+
+def format_date(value):
+    """date -> 'Tue 7 Oct' (short and clear on a phone)."""
+    return f"{_WEEKDAYS[value.weekday()]} {value.day} {_MONTHS[value.month - 1]}"
+
+
+def format_time(value):
+    """time or datetime -> '3:30 pm'."""
+    hour = value.hour % 12 or 12
+    return f"{hour}:{value.minute:02d} {'am' if value.hour < 12 else 'pm'}"
+
+
+def get_template_body(clinic, kind, language="en"):
+    """The clinic's own wording for this kind of message, or the built-in default."""
+    template = MessageTemplate.objects.filter(clinic=clinic, kind=kind, language=language).first()
+    if template and template.body.strip():
+        return template.body
+    return DEFAULT_TEMPLATES[kind]
+
+
+class MessageBuilder:
+    """Writes reminder messages for one clinic.
+
+    Loads the clinic's templates and doctors' names once, so generating many
+    reminders costs two queries, not two per reminder.
+    """
+
+    def __init__(self, clinic, language="en"):
+        self.clinic = clinic
+        self.language = language
+        self._bodies = None
+        self._doctor_names = None
+
+    def body(self, kind):
+        if self._bodies is None:
+            self._bodies = dict(
+                MessageTemplate.objects.filter(clinic=self.clinic, language=self.language).values_list("kind", "body")
+            )
+        custom = self._bodies.get(kind, "")
+        return custom if custom.strip() else DEFAULT_TEMPLATES[kind]
+
+    def doctor_name(self, user):
+        """'Dr. Bilal Hussain' (title from the clinic membership) or 'the doctor'."""
+        if user is None:
+            return DOCTOR_FALLBACK
+        if self._doctor_names is None:
+            self._doctor_names = {
+                m.user_id: m.display_name
+                for m in Membership.objects.filter(clinic=self.clinic).select_related("user")
+            }
+        return self._doctor_names.get(user.pk) or user.full_name or DOCTOR_FALLBACK
+
+    # Contexts: the values for each placeholder.
+
+    def base_context(self, patient):
+        return {
+            "patient_name": patient.full_name,
+            "first_name": patient.first_name,
+            "clinic_name": self.clinic.name,
+            "clinic_phone": (self.clinic.phone or "").strip() or CLINIC_PHONE_FALLBACK,
+            "doctor_name": DOCTOR_FALLBACK,
+            "date": "",
+            "time": "",
+            "confirm_link": "",
+        }
+
+    def appointment_context(self, appointment):
+        local = timezone.localtime(appointment.scheduled_at, ZoneInfo(self.clinic.timezone))
+        context = self.base_context(appointment.patient)
+        context.update(
+            doctor_name=self.doctor_name(appointment.doctor),
+            date=format_date(local.date()),
+            time=format_time(local),
+            confirm_link=appointment.get_confirm_url(),
+        )
+        return context
+
+    def visit_context(self, visit):
+        context = self.base_context(visit.patient)
+        context.update(
+            doctor_name=self.doctor_name(visit.doctor),
+            date=format_date(visit.follow_up_date) if visit.follow_up_date else "",
+        )
+        return context
+
+    def custom_context(self, patient, on_date=None):
+        context = self.base_context(patient)
+        context["date"] = format_date(on_date or _clinic_today(self.clinic))
+        return context
+
+    # Finished messages.
+
+    def appointment_message(self, appointment):
+        return render_message(self.body(ReminderKind.APPOINTMENT), self.appointment_context(appointment))
+
+    def visit_message(self, visit, kind):
+        return render_message(self.body(kind), self.visit_context(visit))
+
+    def custom_message(self, patient):
+        return render_message(self.body(ReminderKind.CUSTOM), self.custom_context(patient))
+
+
+def sample_context(clinic, kind, today=None):
+    """Made-up patient details for previewing a template. Touches nothing in the database
+    except reading the clinic's doctors (for a realistic doctor name)."""
+    today = today or _clinic_today(clinic)
+    doctor = (
+        Membership.objects.filter(clinic=clinic, is_active=True, role__in=Membership.CLINICAL_ROLES)
+        .select_related("user")
+        .order_by("created_at")
+        .first()
+    )
+    dates = {
+        ReminderKind.APPOINTMENT: today + timedelta(days=1),
+        ReminderKind.FOLLOW_UP: today + timedelta(days=2),
+        ReminderKind.OVERDUE: today - timedelta(days=5),
+        ReminderKind.CUSTOM: today,
+    }
+    return {
+        "patient_name": "Ayesha Khan",
+        "first_name": "Ayesha",
+        "clinic_name": clinic.name,
+        "clinic_phone": (clinic.phone or "").strip() or CLINIC_PHONE_FALLBACK,
+        "doctor_name": doctor.display_name if doctor else DOCTOR_FALLBACK,
+        "date": format_date(dates.get(kind, today)),
+        "time": format_time(time(10, 30)) if kind == ReminderKind.APPOINTMENT else "",
+        "confirm_link": f"{settings.SITE_URL}/c/Xy7kP2qLm9/" if kind == ReminderKind.APPOINTMENT else "",
+    }
+
+
+# --- Small helpers -----------------------------------------------------------
+
+
+def _clinic_tz(clinic):
+    return ZoneInfo(clinic.timezone)
+
+
+def _clinic_today(clinic):
+    return timezone.localdate(timezone.now(), _clinic_tz(clinic))
+
+
+def _start_of_day(day):
+    """Midnight at the start of `day` in the active (clinic) timezone."""
+    return timezone.make_aware(datetime.combine(day, time.min))
+
+
+def _wants_reminders(patient):
+    return patient.reminders_opt_in and not patient.is_archived
+
+
+def _create_reminder(**fields):
+    """Create one reminder unless an identical one already exists. Returns True if created.
+
+    The unique constraints make this safe when two requests generate at the same time.
+    """
+    try:
+        with transaction.atomic():
+            Reminder.objects.create(**fields)
+    except IntegrityError:
+        return False
+    return True
+
+
+def _appointment_due_date(appointment, today, clinic):
+    """Send `appointment_reminder_days` before the appointment, but never in the past."""
+    appointment_day = timezone.localtime(appointment.scheduled_at).date()
+    return max(today, appointment_day - timedelta(days=clinic.appointment_reminder_days))
+
+
+def _appointment_in_window(appointment, today, now, clinic):
+    """Still to come, and its (local) date is within the reminder window starting today."""
+    appointment_day = timezone.localtime(appointment.scheduled_at).date()
+    last_day = today + timedelta(days=clinic.appointment_reminder_days)
+    return appointment.scheduled_at > now and today <= appointment_day <= last_day
+
+
+def _later_visits(patient_ref, visit_date_ref, visit_pk_ref):
+    """Visits of the same patient after the given one (subquery for Exists)."""
+    return Visit.objects.filter(patient_id=patient_ref).filter(
+        Q(visit_date__gt=visit_date_ref) | Q(visit_date=visit_date_ref, pk__gt=visit_pk_ref)
+    )
+
+
+def _booked_appointments(patient_ref, visit_date_ref, own_appointment_ref):
+    """Appointments that make a follow-up reminder unnecessary (subquery for Exists).
+
+    Booked for after the visit, not cancelled / did-not-come, and not the
+    appointment the visit itself came from.
+    """
+    return (
+        Appointment.objects.filter(patient_id=patient_ref, scheduled_at__gt=visit_date_ref)
+        .exclude(status__in=NOT_COMING_STATUSES)
+        .exclude(pk=Coalesce(own_appointment_ref, Value(0), output_field=models.BigIntegerField()))
+    )
+
+
+def _visits_awaiting_follow_up(clinic):
+    """Visits with a follow-up date whose patient has not come back or booked since."""
+    return (
+        Visit.objects.filter(
+            clinic=clinic,
+            follow_up_date__isnull=False,
+            patient__reminders_opt_in=True,
+            patient__is_archived=False,
+        )
+        .filter(~Exists(_later_visits(OuterRef("patient_id"), OuterRef("visit_date"), OuterRef("pk"))))
+        .filter(
+            ~Exists(_booked_appointments(OuterRef("patient_id"), OuterRef("visit_date"), OuterRef("appointment_id")))
+        )
+    )
+
+
+# --- Generation ----------------------------------------------------------------
 
 
 def generate_reminders(clinic, today=None):
-    return 0
+    """Prepare the reminders that are due for one clinic. Returns how many were created.
+
+    Idempotent: running it twice creates nothing new the second time. Cheap
+    enough to run on every dashboard load (a fixed number of queries, plus one
+    insert per new reminder). Also marks reminders that are no longer needed as
+    skipped (it never deletes sent ones).
+
+    `today` defaults to the clinic's local date.
+    """
+    with timezone.override(_clinic_tz(clinic)):
+        now = timezone.now()
+        if today is None:
+            today = timezone.localdate(now)
+        builder = MessageBuilder(clinic)
+        created = _prepare_appointment_reminders(clinic, today, now, builder)
+        created += _prepare_follow_up_reminders(clinic, today, builder)
+        created += _prepare_overdue_reminders(clinic, today, builder)
+        _tidy_stale_reminders(clinic, today, now)
+    return created
+
+
+def _prepare_appointment_reminders(clinic, today, now, builder):
+    last_day = today + timedelta(days=clinic.appointment_reminder_days)
+    appointments = (
+        Appointment.objects.filter(
+            clinic=clinic,
+            status__in=REMINDABLE_STATUSES,
+            scheduled_at__gt=now,
+            scheduled_at__gte=_start_of_day(today),
+            scheduled_at__lt=_start_of_day(last_day + timedelta(days=1)),
+            patient__reminders_opt_in=True,
+            patient__is_archived=False,
+        )
+        .exclude(reminders__kind=ReminderKind.APPOINTMENT)
+        .select_related("patient", "doctor")
+    )
+    created = 0
+    for appointment in appointments:
+        created += _create_reminder(
+            clinic=clinic,
+            patient=appointment.patient,
+            appointment=appointment,
+            kind=ReminderKind.APPOINTMENT,
+            due_date=_appointment_due_date(appointment, today, clinic),
+            message=builder.appointment_message(appointment),
+        )
+    return created
+
+
+def _prepare_follow_up_reminders(clinic, today, builder):
+    days = clinic.followup_reminder_days
+    visits = (
+        _visits_awaiting_follow_up(clinic)
+        .filter(follow_up_date__gte=today, follow_up_date__lte=today + timedelta(days=days))
+        .exclude(reminders__kind=ReminderKind.FOLLOW_UP)
+        .select_related("patient", "doctor")
+    )
+    created = 0
+    for visit in visits:
+        created += _create_reminder(
+            clinic=clinic,
+            patient=visit.patient,
+            visit=visit,
+            kind=ReminderKind.FOLLOW_UP,
+            due_date=max(today, visit.follow_up_date - timedelta(days=days)),
+            message=builder.visit_message(visit, ReminderKind.FOLLOW_UP),
+        )
+    return created
+
+
+def _prepare_overdue_reminders(clinic, today, builder):
+    visits = (
+        _visits_awaiting_follow_up(clinic)
+        .filter(
+            follow_up_date__lte=today - timedelta(days=clinic.overdue_grace_days),
+            follow_up_date__gte=today - timedelta(days=OVERDUE_LOOKBACK_DAYS),
+        )
+        .exclude(reminders__kind=ReminderKind.OVERDUE)
+        .select_related("patient", "doctor")
+    )
+    created = 0
+    for visit in visits:
+        created += _create_reminder(
+            clinic=clinic,
+            patient=visit.patient,
+            visit=visit,
+            kind=ReminderKind.OVERDUE,
+            due_date=today,
+            message=builder.visit_message(visit, ReminderKind.OVERDUE),
+        )
+    return created
+
+
+def _tidy_stale_reminders(clinic, today, now):
+    """Mark pending reminders that are no longer needed as skipped. Returns how many."""
+    skipped = Reminder.Status.SKIPPED
+    pending = Reminder.objects.filter(clinic=clinic, status=Reminder.Status.PENDING)
+    patient_left = Q(patient__reminders_opt_in=False) | Q(patient__is_archived=True)
+    count = 0
+
+    # Appointment reminders: cancelled, moved to another status, or the time has passed.
+    count += (
+        pending.filter(kind=ReminderKind.APPOINTMENT)
+        .filter(~Q(appointment__status__in=REMINDABLE_STATUSES) | Q(appointment__scheduled_at__lte=now) | patient_left)
+        .update(status=skipped)
+    )
+
+    visit_reminders = pending.filter(kind__in=VISIT_KINDS)
+    # The patient opted out or was archived, or the doctor removed the follow-up date.
+    count += visit_reminders.filter(patient_left | Q(visit__follow_up_date__isnull=True)).update(status=skipped)
+    # The patient came back (a later visit) or booked an appointment.
+    count += visit_reminders.filter(
+        Exists(_later_visits(OuterRef("patient_id"), OuterRef("visit__visit_date"), OuterRef("visit_id")))
+    ).update(status=skipped)
+    count += visit_reminders.filter(
+        Exists(
+            _booked_appointments(
+                OuterRef("patient_id"), OuterRef("visit__visit_date"), OuterRef("visit__appointment_id")
+            )
+        )
+    ).update(status=skipped)
+    # A "missed follow-up" message replaces the "follow-up due" one that was never sent.
+    count += visit_reminders.filter(
+        kind=ReminderKind.FOLLOW_UP,
+        visit__reminders__kind=ReminderKind.OVERDUE,
+    ).update(status=skipped)
+    # Too old to chase.
+    count += visit_reminders.filter(
+        kind=ReminderKind.OVERDUE,
+        visit__follow_up_date__lt=today - timedelta(days=OVERDUE_LOOKBACK_DAYS),
+    ).update(status=skipped)
+    return count
+
+
+# --- Keeping reminders in step with appointments and visits ----------------------
 
 
 def refresh_for_appointment(appointment, rescheduled=False):
-    return None
+    """Keep an appointment's reminder in step after it is booked, edited or changes status.
+
+    * Cancelled, did not come, seen (or any state that needs no reminder), or the
+      patient opted out: a pending reminder is marked skipped.
+    * rescheduled=True and a reminder exists: it is rewritten for the new time and
+      set back to "To send" (even if the old one was sent) when the new time is
+      inside the reminder window; otherwise it is removed so that generation
+      prepares it again on the right day.
+    * Otherwise the reminder is created now if the appointment is already inside
+      the reminder window.
+    """
+    clinic = appointment.clinic
+    with timezone.override(_clinic_tz(clinic)):
+        now = timezone.now()
+        today = timezone.localdate(now)
+        reminder = Reminder.objects.filter(kind=ReminderKind.APPOINTMENT, appointment=appointment).first()
+
+        if appointment.status not in REMINDABLE_STATUSES or not _wants_reminders(appointment.patient):
+            if reminder is not None and reminder.status == Reminder.Status.PENDING:
+                reminder.status = Reminder.Status.SKIPPED
+                reminder.save(update_fields=["status"])
+            return
+
+        in_window = _appointment_in_window(appointment, today, now, clinic)
+
+        if reminder is not None:
+            if not rescheduled:
+                return
+            if in_window:
+                reminder.message = MessageBuilder(clinic).appointment_message(appointment)
+                reminder.due_date = _appointment_due_date(appointment, today, clinic)
+                reminder.status = Reminder.Status.PENDING
+                reminder.sent_at = None
+                reminder.sent_by = None
+                reminder.save(update_fields=["message", "due_date", "status", "sent_at", "sent_by"])
+            else:
+                reminder.delete()
+            return
+
+        if in_window:
+            _create_reminder(
+                clinic=clinic,
+                patient=appointment.patient,
+                appointment=appointment,
+                kind=ReminderKind.APPOINTMENT,
+                due_date=_appointment_due_date(appointment, today, clinic),
+                message=MessageBuilder(clinic).appointment_message(appointment),
+            )
 
 
 def refresh_for_visit(visit):
-    return None
+    """Keep follow-up reminders in step after a visit is saved.
+
+    * A visit makes the pending follow-up / missed-follow-up reminders of the
+      patient's EARLIER visits unnecessary: they are marked skipped.
+    * This visit's own pending reminders are removed if its follow-up date was
+      changed or cleared, so that generation prepares them again with the right date.
+    """
+    clinic = visit.clinic
+    with timezone.override(_clinic_tz(clinic)):
+        today = timezone.localdate()
+        pending = Reminder.objects.filter(
+            patient_id=visit.patient_id, kind__in=VISIT_KINDS, status=Reminder.Status.PENDING
+        )
+        earlier = Q(visit__visit_date__lt=visit.visit_date) | Q(
+            visit__visit_date=visit.visit_date, visit_id__lt=visit.pk
+        )
+        pending.filter(earlier).exclude(visit_id=visit.pk).update(status=Reminder.Status.SKIPPED)
+
+        for reminder in pending.filter(visit_id=visit.pk):
+            if not _still_fits_follow_up_date(reminder, visit, today):
+                reminder.delete()
+
+
+# A date written by format_date(), e.g. "Tue 7 Oct".
+_MESSAGE_DATE_RE = re.compile(r"\b(?:%s) \d{1,2} (?:%s)\b" % ("|".join(_WEEKDAYS), "|".join(_MONTHS)))
+
+
+def _still_fits_follow_up_date(reminder, visit, today):
+    """Was this pending reminder prepared for the visit's CURRENT follow-up date?
+
+    The reminder does not store the date it was written for, so we check what we can:
+    its due day must still make sense for that date, and any date written in the
+    message must be that date. (Staff may have edited the wording; that is fine as
+    long as the date still matches.)
+    """
+    follow_up = visit.follow_up_date
+    if follow_up is None:
+        return False
+    clinic = visit.clinic
+
+    if reminder.kind == ReminderKind.FOLLOW_UP:
+        # Prepared at most `followup_reminder_days` before the date, and never after it.
+        latest_follow_up = reminder.due_date + timedelta(days=clinic.followup_reminder_days)
+        if not reminder.due_date <= follow_up <= latest_follow_up:
+            return False
+    elif reminder.kind == ReminderKind.OVERDUE:
+        # Only right while the follow-up is still overdue.
+        if follow_up > today - timedelta(days=clinic.overdue_grace_days):
+            return False
+
+    dates_in_message = _MESSAGE_DATE_RE.findall(reminder.message)
+    return not dates_in_message or format_date(follow_up) in dates_in_message

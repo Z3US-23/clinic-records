@@ -1,0 +1,41 @@
+{% extends "base_public.html" %}
+{% block title %}Register your clinic · {{ PRODUCT_NAME }}{% endblock %}
+{% block card_class %}public-card-wide{% endblock %}
+
+{% block content %}
+  <h1>Register your clinic</h1>
+  <p class="muted">Set up your clinic in a minute. You will be the clinic owner and can add your doctors and receptionists afterwards.</p>
+
+  <form method="post" class="form mt-2">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{% for e in form.non_field_errors %}{{ e }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</div></div>
+    {% endif %}
+
+    <fieldset class="form-section">
+      <legend>Your clinic</legend>
+      <div class="form-grid">
+        <div class="span-2">{% include "includes/field.html" with field=form.clinic_name %}</div>
+        {% include "includes/field.html" with field=form.country %}
+        {% include "includes/field.html" with field=form.city %}
+        <div class="span-2">{% include "includes/field.html" with field=form.clinic_phone %}</div>
+      </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+      <legend>About you</legend>
+      <div class="form-grid">
+        {% include "includes/field.html" with field=form.title %}
+        {% include "includes/field.html" with field=form.full_name %}
+        <div class="span-2">{% include "includes/field.html" with field=form.email %}</div>
+        {% include "includes/field.html" with field=form.password1 %}
+        {% include "includes/field.html" with field=form.password2 %}
+      </div>
+    </fieldset>
+
+    <button type="submit" class="btn btn-primary btn-lg btn-block">Create my clinic</button>
+  </form>
+
+  <hr>
+  <p class="mb-0">Already have an account? <a href="{% url 'accounts:login' %}">Sign in</a></p>
+{% endblock %}

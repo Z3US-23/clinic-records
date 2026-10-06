@@ -1,0 +1,24 @@
+{% extends "base_public.html" %}
+{% block title %}No clinic · {{ PRODUCT_NAME }}{% endblock %}
+
+{% block content %}
+  <div class="empty-state">
+    {% include "includes/icon.html" with name="users" %}
+    <h3>You're not part of a clinic right now</h3>
+    <p>You are signed in as <strong>{{ user.email }}</strong>, but this account doesn't have access to any clinic at the moment.</p>
+  </div>
+
+  <div class="stack-sm">
+    <p class="mb-0">This usually means:</p>
+    <ul class="mt-0">
+      <li>your clinic owner has switched off your access, or</li>
+      <li>the clinic's account has been paused.</li>
+    </ul>
+    <p>Please speak to your clinic owner. Once they switch your access back on, just sign in again.</p>
+  </div>
+
+  <form method="post" action="{% url 'accounts:logout' %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary btn-block">{% include "includes/icon.html" with name="logout" %}Sign out</button>
+  </form>
+{% endblock %}

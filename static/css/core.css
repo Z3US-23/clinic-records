@@ -1,0 +1,32 @@
+/* Core pages (Today dashboard, audit log, export). Builds on the tokens and components in app.css. */
+
+/* Dashboard lists: let the action button drop below the name on narrow phones */
+.dashboard .list-item { flex-wrap: wrap; }
+.dashboard .list-item .grow { min-width: 150px; }
+.dashboard .list-item .meta .badge { margin-right: 2px; }
+
+/* First-day checklist for new clinic owners */
+.checklist { list-style: none; margin: 0; padding: 0; }
+.checklist-item { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.checklist-item:last-child { border-bottom: 0; }
+.checklist-item .grow { flex: 1; min-width: 180px; }
+.checklist-item .title { font-weight: 600; }
+.checklist-item .meta { font-size: 0.84rem; color: var(--text-muted); }
+.check-mark {
+  width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--border-strong);
+  display: inline-grid; place-items: center; color: transparent; flex-shrink: 0;
+}
+.checklist-item.is-done .check-mark { background: var(--success); border-color: var(--success); color: #fff; }
+.checklist-item.is-done .title { color: var(--text-muted); text-decoration: line-through; }
+
+/* Audit log filters: labelled fields in one row, wrapping on phones */
+.filter-bar { align-items: flex-end; }
+.filter-bar .field { gap: 4px; }
+.filter-bar .field label { font-size: 0.8rem; color: var(--text-muted); }
+@media (max-width: 520px) {
+  .filter-bar .field { flex: 1 1 140px; }
+  .filter-bar select, .filter-bar input[type="date"] { width: 100%; min-width: 0; }
+}
+
+/* Error pages */
+.error-code { font-size: 0.85rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); }

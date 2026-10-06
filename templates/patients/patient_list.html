@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+
+{% block title %}{% if show_archived %}Archived patients{% else %}Patients{% endif %}{% endblock %}
+
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/patients.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{% if show_archived %}Archived patients{% else %}Patients{% endif %}</h1>
+    <p class="subtitle">
+      {% with total=page_obj.paginator.count %}
+        {% if q %}{{ total }} found for “{{ q }}”{% else %}{{ total }} {% if show_archived %}archived {% endif %}patient{{ total|pluralize }}{% endif %}
+      {% endwith %}
+    </p>
+  </div>
+  <div class="page-actions">
+    {% if is_owner %}
+      <a class="btn btn-secondary" href="{% url 'patients:import' %}">{% include "includes/icon.html" with name="upload" %}Import from spreadsheet</a>
+    {% endif %}
+    <a class="btn btn-primary" href="{% url 'patients:create' %}">{% include "includes/icon.html" with name="user-plus" %}Add patient</a>
+  </div>
+</div>
+
+<form method="get" class="toolbar patient-toolbar" role="search">
+  {% if show_archived %}<input type="hidden" name="archived" value="1">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Name, phone or MR number" aria-label="Search patients" autocomplete="off">
+  <label class="toolbar-label" for="patient-sort">Sort</label>
+  <select id="patient-sort" name="sort" data-autosubmit>
+    {% for value, label in sort_choices %}
+      <option value="{{ value }}" {% if value == sort %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn btn-secondary">{% include "includes/icon.html" with name="search" %}Search</button>
+  {% if q %}<a class="btn btn-ghost" href="{% querystring q=None page=None %}">Clear</a>{% endif %}
+  <span class="toolbar-chips">
+    <a class="chip {% if not show_archived %}active{% endif %}" href="{% querystring archived=None page=None %}">Active</a>
+    <a class="chip {% if show_archived %}active{% endif %}" href="{% querystring archived='1' page=None %}">Archived</a>
+  </span>
+</form>
+
+<div class="card">
+  {% if patients %}
+    <div class="table-wrap">
+      <table class="table table-stack patient-table">
+        <thead>
+          <tr>
+            <th scope="col">Patient</th>
+            <th scope="col">Age / sex</th>
+            <th scope="col">Phone</th>
+            <th scope="col">Last visit</th>
+            <th scope="col">Next appointment</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for patient in patients %}
+            <tr>
+              <td data-label="">
+                <div class="patient-cell">
+                  <span class="avatar" aria-hidden="true">{{ patient.full_name|initials }}</span>
+                  <div class="patient-cell-text">
+                    <a class="row-link" href="{{ patient.get_absolute_url }}">{{ patient.full_name }}</a>
+                    <div class="subtle small">{{ patient.mrn }}{% if patient.is_archived %} · <span class="badge badge-muted">Archived</span>{% endif %}</div>
+                  </div>
+                </div>
+              </td>
+              <td data-label="Age / sex">
+                {% if patient.age_display %}{{ patient.age_display }}{% if patient.dob_is_estimated %} <span class="subtle">(approx.)</span>{% endif %} · {% endif %}{{ patient.get_sex_display }}
+              </td>
+              <td data-label="Phone" class="nowrap">{{ patient.phone }}</td>
+              <td data-label="Last visit" class="nowrap">{% if patient.last_visit %}{{ patient.last_visit|date:"j M Y" }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+              <td data-label="Next appointment" class="nowrap">
+                {% if patient.next_appointment %}
+                  <span class="when"><span>{{ patient.next_appointment|date:"j M Y" }}</span><span class="when-time">{{ patient.next_appointment|time:"g:i a" }}</span></span>
+                {% else %}<span class="subtle">—</span>{% endif %}
+              </td>
+              <td data-label="" class="text-right">
+                {% if patient.is_archived %}
+                  <a class="btn btn-ghost btn-sm" href="{{ patient.get_absolute_url }}">Open</a>
+                {% else %}
+                  <a class="btn btn-secondary btn-sm" href="{% url 'appointments:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="calendar-plus" size="sm" %}Book</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include "includes/pagination.html" %}
+  {% elif q %}
+    {% url 'patients:create' as create_url %}
+    {% include "includes/empty_state.html" with icon="search" title="No patient found" text="Check the spelling, or try the phone number or MR number. New patient? Add them now." action_url=create_url action_label="Add patient" %}
+  {% elif show_archived %}
+    {% include "includes/empty_state.html" with icon="users" title="No archived patients" text="Patients you archive are kept here, out of the way of everyday lists." %}
+  {% else %}
+    {% url 'patients:create' as create_url %}
+    {% include "includes/empty_state.html" with icon="users" title="No patients yet" text="Add your first patient to start keeping their records, appointments and reminders in one place." action_url=create_url action_label="Add patient" %}
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/patients.js' %}" defer></script>{% endblock %}

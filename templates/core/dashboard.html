@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% load static humanize core_tags appointment_tags %}
+{% block title %}Today{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+  <div class="page-header">
+    <div>
+      <h1>{{ greeting }}, {{ greeting_name }}</h1>
+      <p class="subtitle">{{ today|date:"l, j M Y" }} · {{ current_clinic.name }}</p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-secondary" href="{% url 'appointments:create' %}">{% include "includes/icon.html" with name="calendar-plus" %}Book appointment</a>
+    </div>
+  </div>
+
+  {% if onboarding_steps %}
+  <section class="card mb-3" aria-labelledby="onboarding-title">
+    <div class="card-header">
+      <h2 id="onboarding-title">Get your clinic ready</h2>
+      <span class="small muted">{{ onboarding_done }} of {{ onboarding_steps|length }} done</span>
+    </div>
+    <ul class="checklist">
+      {% for step in onboarding_steps %}
+      <li class="checklist-item{% if step.done %} is-done{% endif %}">
+        <span class="check-mark" aria-hidden="true">{% include "includes/icon.html" with name="check" size="sm" %}</span>
+        <div class="grow">
+          <a class="title" href="{{ step.url }}">{{ step.label }}</a>{% if step.done %}<span class="visually-hidden"> (done)</span>{% endif %}
+          <div class="meta">{{ step.text }}</div>
+        </div>
+        {% if not step.done %}<a class="btn btn-secondary btn-sm" href="{{ step.url }}">Start</a>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <div class="stat-grid mb-3">
+    <a class="stat" href="{% url 'appointments:day' %}">
+      <div class="stat-label">{% include "includes/icon.html" with name="calendar" size="sm" %}Appointments today</div>
+      <div class="stat-value">{{ stats.appointments_today }}</div>
+      <div class="stat-note">{{ stats.waiting }} waiting</div>
+    </a>
+    <a class="stat{% if stats.reminders_due %} stat-warning{% endif %}" href="{% url 'reminders:list' %}">
+      <div class="stat-label">{% include "includes/icon.html" with name="bell" size="sm" %}Reminders to send</div>
+      <div class="stat-value">{{ stats.reminders_due }}</div>
+      <div class="stat-note">WhatsApp messages ready</div>
+    </a>
+    <a class="stat{% if stats.missed_follow_ups %} stat-danger{% endif %}" href="{% url 'reminders:list' %}?tab=due">
+      <div class="stat-label">{% include "includes/icon.html" with name="alert" size="sm" %}Missed follow-ups</div>
+      <div class="stat-value">{{ stats.missed_follow_ups }}</div>
+      <div class="stat-note">Didn't come back when due</div>
+    </a>
+    <a class="stat" href="{% url 'patients:list' %}">
+      <div class="stat-label">{% include "includes/icon.html" with name="users" size="sm" %}Patients</div>
+      <div class="stat-value">{{ stats.patients|intcomma }}</div>
+      <div class="stat-note">{{ stats.new_this_month }} new this month</div>
+    </a>
+  </div>
+
+  <div class="grid-sidebar">
+    <div class="stack">
+
+      <section class="card" aria-labelledby="waiting-title">
+        <div class="card-header">
+          <h2 id="waiting-title">Waiting room</h2>
+          {% if waiting %}<span class="badge badge-primary">{{ waiting|length }} waiting</span>{% endif %}
+        </div>
+        {% if waiting %}
+        <ul class="list">
+          {% for appt in waiting %}
+          <li class="list-item">
+            <span class="token" title="Token number">{{ appt.token }}</span>
+            <div class="grow">
+              <a class="title" href="{% url 'patients:detail' appt.patient_id %}">{{ appt.patient.full_name }}</a>
+              <div class="meta">{{ appt.patient.mrn }} · booked for {{ appt.scheduled_at|time:"g:i a" }}{% if appt.doctor_name %} · {{ appt.doctor_name }}{% endif %}</div>
+            </div>
+            {% if is_clinician %}
+              <a class="btn btn-primary btn-sm" href="{% url 'clinical:visit_create' appt.patient_id %}?appointment={{ appt.pk }}">{% include "includes/icon.html" with name="clipboard" size="sm" %}Start visit</a>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+          <p class="card-empty">Nobody is waiting right now. When a patient arrives, mark them "Arrived" on the schedule.</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-labelledby="today-title">
+        <div class="card-header">
+          <h2 id="today-title">Today's appointments</h2>
+          <a class="btn btn-ghost btn-sm" href="{% url 'appointments:day' %}">Open schedule{% include "includes/icon.html" with name="arrow-right" size="sm" %}</a>
+        </div>
+        {% if appointments %}
+        <div class="table-wrap">
+          <table class="table table-stack">
+            <thead><tr><th>Time</th><th>Patient</th><th>Doctor</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for appt in appointments %}
+              <tr>
+                <td data-label="Time" class="nowrap">{{ appt.scheduled_at|time:"g:i a" }}</td>
+                <td data-label="Patient">
+                  <a class="row-link" href="{% url 'patients:detail' appt.patient_id %}">{{ appt.patient.full_name }}</a>
+                  <span class="small subtle">{{ appt.patient.mrn }}</span>
+                </td>
+                <td data-label="Doctor">{{ appt.doctor_name|default:"Any doctor" }}</td>
+                <td data-label="Status"><span class="badge {{ appt.status|badge_class }}">{{ appt.status|status_label }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          {% url 'appointments:create' as book_url %}
+          {% include "includes/empty_state.html" with icon="calendar" title="No appointments today" text="Book patients in and they will show up here." action_url=book_url action_label="Book appointment" %}
+        {% endif %}
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="card" aria-labelledby="reminders-title">
+        <div class="card-header">
+          <h2 id="reminders-title">Reminders to send</h2>
+          {% if stats.reminders_due %}<span class="badge badge-warning">{{ stats.reminders_due }}</span>{% endif %}
+        </div>
+        {% if reminders_to_send %}
+        <ul class="list">
+          {% for reminder in reminders_to_send %}
+          <li class="list-item">
+            <div class="grow">
+              <a class="title" href="{% url 'patients:detail' reminder.patient_id %}">{{ reminder.patient.full_name }}</a>
+              <div class="meta">
+                <span class="badge {{ reminder.kind|badge_class }}">{{ reminder.get_kind_display }}</span>
+                {% if reminder.due_date < today %}<span class="nowrap">· due {{ reminder.due_date|date:"j M" }}</span>{% endif %}
+              </div>
+            </div>
+            {% if reminder.blocker %}
+              <span class="small muted">{{ reminder.blocker }}</span>
+            {% else %}
+              {# data-wa-send: reminders.js opens WhatsApp in a new tab and refreshes this page #}
+              <form method="post" action="{% url 'reminders:send' reminder.pk %}" class="inline-form" data-wa-send>{% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button type="submit" class="btn btn-whatsapp btn-sm">{% include "includes/icon.html" with name="whatsapp" size="sm" %}Send on WhatsApp</button>
+              </form>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        <div class="card-footer"><a href="{% url 'reminders:list' %}">See all reminders{% if stats.reminders_due > 5 %} ({{ stats.reminders_due }}){% endif %}</a></div>
+        {% else %}
+          <p class="card-empty">All caught up. No messages to send today.</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-labelledby="coming-back-title">
+        <div class="card-header"><h2 id="coming-back-title">Coming back soon</h2><span class="small muted">Next 7 days</span></div>
+        {% if coming_back %}
+        <ul class="list">
+          {% for visit in coming_back %}
+          <li class="list-item">
+            <div class="grow">
+              <a class="title" href="{% url 'patients:detail' visit.patient_id %}">{{ visit.patient.full_name }}</a>
+              <div class="meta">{% if visit.follow_up_date == today %}Due today{% else %}{{ visit.follow_up_date|date:"D j M" }}{% endif %}</div>
+            </div>
+            {% if visit.is_booked %}<span class="badge badge-success">Booked</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+          <p class="card-empty">No follow-ups due in the next week.</p>
+        {% endif %}
+      </section>
+
+      {% if is_clinician %}
+      <section class="card" aria-labelledby="recent-title">
+        <div class="card-header"><h2 id="recent-title">Your recent visits</h2></div>
+        {% if recent_visits %}
+        <div class="list">
+          {% for visit in recent_visits %}
+          <a class="list-item" href="{% url 'clinical:visit_detail' visit.pk %}">
+            <div class="grow">
+              <div class="title truncate">{{ visit.patient.full_name }}</div>
+              <div class="meta truncate">{{ visit.diagnosis|default:visit.chief_complaint }}</div>
+            </div>
+            <span class="small muted nowrap">{{ visit.visit_date|date:"j M" }}</span>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="card-empty">Visits you record will appear here.</p>
+        {% endif %}
+      </section>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{# Same one-tap send behaviour as the Reminders page (forms marked data-wa-send). #}
+<script src="{% static 'js/reminders.js' %}" defer></script>
+{% endblock %}

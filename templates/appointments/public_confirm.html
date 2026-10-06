@@ -1,0 +1,73 @@
+{% extends "base_public.html" %}
+{% load static %}
+{% comment %}
+Public page for the patient (no login). Show ONLY: clinic name/address/phone, the patient's
+first name, the appointment day/time and the doctor's name. Never the MRN, full name or reason.
+{% endcomment %}
+
+{% block title %}Your appointment · {{ clinic.name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/appointments.css' %}">{% endblock %}
+{% block body_class %}confirm-page{% endblock %}
+
+{% block content %}
+<p class="confirm-clinic">{{ clinic.name }}</p>
+<h1 class="confirm-hello">Hello {{ first_name }},</h1>
+
+{% if can_respond and responded and status == "confirmed" %}
+  <div class="alert alert-success" role="status">{% include "includes/icon.html" with name="check" %}<div><strong>Thank you!</strong> We have noted that you will come.</div></div>
+{% elif can_respond and responded and status == "reschedule" %}
+  <div class="alert alert-info" role="status">{% include "includes/icon.html" with name="info" %}<div><strong>Thank you.</strong> We have told the clinic you need another time. They will contact you.</div></div>
+{% elif can_respond %}
+  <p class="confirm-lead">Please tell us if you can come to your appointment.</p>
+{% endif %}
+
+<div class="confirm-when">
+  <div class="confirm-day">{{ when|date:"l" }}</div>
+  <div class="confirm-date">{{ when|date:"j F Y" }}</div>
+  <div class="confirm-time">{% include "includes/icon.html" with name="clock" %}{{ when|time:"g:i a" }}</div>
+  {% if doctor_name %}<div class="confirm-doctor">with {{ doctor_name }}</div>{% endif %}
+</div>
+
+{% if can_respond %}
+  {% if form.errors %}
+    <div class="alert alert-danger" role="alert">{% include "includes/icon.html" with name="alert" %}<div>{% for field in form %}{% for error in field.errors %}{{ error }} {% endfor %}{% endfor %}{% for error in form.non_field_errors %}{{ error }} {% endfor %}</div></div>
+  {% endif %}
+
+  <div class="confirm-actions">
+    {% if status != "confirmed" %}
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="answer" value="confirm">
+        <button type="submit" class="btn btn-primary btn-lg btn-block">{% include "includes/icon.html" with name="check" %}Yes, I will come</button>
+      </form>
+    {% endif %}
+
+    {% if status != "reschedule" %}
+      <form method="post" class="confirm-reschedule">
+        {% csrf_token %}
+        <input type="hidden" name="answer" value="reschedule">
+        <p class="confirm-question">{% if status == "confirmed" %}Can't come after all?{% else %}Need a different day or time?{% endif %}</p>
+        <label for="{{ form.note.id_for_label }}">{{ form.note.label }}</label>
+        {{ form.note }}
+        <button type="submit" class="btn btn-secondary btn-lg btn-block">{% include "includes/icon.html" with name="calendar" %}I need another time</button>
+      </form>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="alert alert-warning" role="status">
+    {% include "includes/icon.html" with name="info" %}
+    <div>This appointment can no longer be changed online. Please call the clinic.</div>
+  </div>
+{% endif %}
+
+<div class="confirm-clinic-details">
+  {% if clinic.address or clinic.city %}
+    <p class="muted">{{ clinic.address }}{% if clinic.address and clinic.city %}, {% endif %}{{ clinic.city }}</p>
+  {% endif %}
+  {% if clinic.phone %}
+    <a class="btn btn-secondary btn-lg btn-block" href="tel:{% if clinic_tel %}+{{ clinic_tel }}{% else %}{{ clinic.phone }}{% endif %}">{% include "includes/icon.html" with name="phone" %}Call {{ clinic.phone }}</a>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block footer %}<p class="public-footer">Please don't share this link. It is only for your appointment.</p>{% endblock %}

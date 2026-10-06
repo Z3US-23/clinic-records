@@ -1,0 +1,98 @@
+/* Appointments: day & week schedule, waiting room, booking form, patient confirmation page.
+   Only components that app.css doesn't already have; colours come from app.css tokens. */
+
+/* ---------- Status dots (same colours as the status badges) ---------- */
+.status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--text-subtle); }
+.status-scheduled { background: var(--info); }
+.status-confirmed { background: var(--success); }
+.status-reschedule { background: var(--warning); }
+.status-arrived { background: var(--primary); }
+.status-completed { background: var(--text-subtle); }
+.status-no_show { background: var(--danger); }
+.status-cancelled { background: var(--border-strong); }
+
+/* ---------- Day view ---------- */
+.appt-toolbar { justify-content: space-between; }
+.appt-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
+.appt-filter input[type="date"], .appt-filter select { width: auto; min-width: 150px; }
+
+.appt-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.appt-chips .chip strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.appt-chips .chip.is-zero { opacity: 0.6; }
+
+.waiting-room .list-item { flex-wrap: wrap; }
+.waiting-room .title { color: var(--text); }
+
+.appt-table td { vertical-align: top; }
+.appt-table .is-cancelled td { color: var(--text-subtle); }
+.appt-table .is-cancelled .row-link { color: var(--text-muted); text-decoration: line-through; }
+.appt-table .is-cancelled .badge { opacity: 0.8; }
+.appt-note { margin-top: 4px; max-width: 260px; white-space: normal; }
+.appt-actions .btn-group { justify-content: flex-end; flex-wrap: wrap; }
+.appt-table tr:target td { background: var(--primary-soft); }
+
+/* ---------- Week view ---------- */
+.week-grid { display: grid; gap: 12px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.week-day { min-width: 0; display: flex; flex-direction: column; }
+.week-day.is-today { border-color: var(--primary); box-shadow: inset 0 3px 0 var(--primary); }
+.week-day-header { color: var(--text); padding: 10px 12px; align-items: flex-start; }
+.week-day-header:hover { text-decoration: none; background: var(--surface-2); }
+.week-day-name { display: block; font-weight: 650; font-size: 0.92rem; }
+.week-day-date { display: block; font-size: 0.8rem; color: var(--text-muted); }
+.week-list { list-style: none; margin: 0; padding: 4px 0; }
+.week-item a { display: flex; align-items: center; gap: 6px; padding: 5px 12px; color: var(--text); font-size: 0.85rem; min-width: 0; }
+.week-item a:hover { background: var(--surface-2); text-decoration: none; }
+.week-item .time { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.week-item .name { min-width: 0; }
+.week-item.is-cancelled a { color: var(--text-subtle); }
+.week-item.is-cancelled .name { text-decoration: line-through; }
+.week-empty { margin: 0; padding: 12px; font-size: 0.85rem; color: var(--text-subtle); }
+
+.appt-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--text-muted); }
+.appt-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- Booking form ---------- */
+.picker-search { display: flex; gap: 8px; flex-wrap: wrap; margin: 0; }
+.picker-search input[type="search"] { flex: 1; min-width: 200px; }
+.picker-results-header { border-top: 1px solid var(--border); }
+
+.walk-in-box, .double-booking-box { padding: 12px 14px; border-radius: var(--radius-sm); }
+.walk-in-box { background: var(--primary-soft); }
+.double-booking-box { background: var(--warning-soft); }
+
+/* ---------- Patient confirmation page (public, cheap phones) ---------- */
+.confirm-clinic { margin: 0 0 4px; font-weight: 700; color: var(--primary-text); font-size: 1.05rem; }
+.confirm-hello { font-size: 1.4rem; margin-bottom: 8px; }
+.confirm-lead { color: var(--text-muted); }
+.confirm-when {
+  margin: 16px 0 20px; padding: 16px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border); text-align: center;
+}
+.confirm-day { font-size: 1rem; color: var(--text-muted); font-weight: 600; }
+.confirm-date { font-size: 1.35rem; font-weight: 700; }
+.confirm-time { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 1.5rem; font-weight: 700; color: var(--primary-text); margin-top: 4px; }
+.confirm-time .icon { width: 22px; height: 22px; }
+.confirm-doctor { margin-top: 6px; color: var(--text-muted); }
+.confirm-actions { display: flex; flex-direction: column; gap: 18px; margin-bottom: 18px; }
+.confirm-actions form { margin: 0; }
+.confirm-actions .btn-lg, .confirm-clinic-details .btn-lg { min-height: 54px; font-size: 1.05rem; white-space: normal; }
+.confirm-reschedule { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+.confirm-question { margin: 0; font-weight: 650; }
+.confirm-reschedule textarea { min-height: 72px; font-size: 1rem; }
+.confirm-clinic-details { margin-top: 8px; }
+.confirm-clinic-details p { margin-bottom: 10px; text-align: center; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1200px) {
+  .week-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+}
+
+@media (max-width: 860px) {
+  .appt-toolbar { flex-direction: column; align-items: stretch; }
+  .appt-filter input[type="date"], .appt-filter select { flex: 1; min-width: 0; }
+  .week-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Stacked table rows: keep each value on the right of its label */
+  .appt-table td > div, .picker-table td > * { text-align: right; }
+  .appt-table td.appt-actions { justify-content: flex-end; padding-top: 8px; }
+  .appt-note { max-width: none; }
+}

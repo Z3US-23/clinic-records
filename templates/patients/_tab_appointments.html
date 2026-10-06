@@ -1,0 +1,60 @@
+{% load core_tags appointment_tags %}
+{% comment %}
+"Appointments" tab (all roles). Expects: patient, upcoming_appointments, past_appointments, tab_limit.
+Each appointment has `doctor_name` set by the view.
+{% endcomment %}
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h2>Upcoming</h2>
+      {% if not patient.is_archived %}
+        <a class="btn btn-secondary btn-sm" href="{% url 'appointments:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="calendar-plus" size="sm" %}Book</a>
+      {% endif %}
+    </div>
+    {% if upcoming_appointments %}
+      <div class="table-wrap">
+        <table class="table table-stack">
+          <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Doctor</th><th scope="col">Reason</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>
+            {% for appointment in upcoming_appointments %}
+              <tr>
+                <td data-label="Date &amp; time" class="nowrap"><strong>{{ appointment.scheduled_at|date:"D j M Y" }}</strong>, {{ appointment.scheduled_at|time:"g:i a" }}</td>
+                <td data-label="Doctor">{{ appointment.doctor_name|default:"Any doctor" }}</td>
+                <td data-label="Reason">{{ appointment.reason|default:"—" }}</td>
+                <td data-label="Status"><span class="badge {{ appointment.status|badge_class }}">{{ appointment.status|status_label }}</span></td>
+                <td data-label="" class="text-right"><a class="btn btn-ghost btn-sm" href="{% url 'appointments:update' appointment.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card-body"><p class="muted mb-0">No upcoming appointments.</p></div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Past and cancelled</h2></div>
+    {% if past_appointments %}
+      <div class="table-wrap">
+        <table class="table table-stack">
+          <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Doctor</th><th scope="col">Reason</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>
+            {% for appointment in past_appointments %}
+              <tr>
+                <td data-label="Date &amp; time" class="nowrap">{{ appointment.scheduled_at|date:"j M Y" }}, {{ appointment.scheduled_at|time:"g:i a" }}</td>
+                <td data-label="Doctor">{{ appointment.doctor_name|default:"Any doctor" }}</td>
+                <td data-label="Reason">{{ appointment.reason|default:"—" }}</td>
+                <td data-label="Status"><span class="badge {{ appointment.status|badge_class }}">{{ appointment.status|status_label }}</span></td>
+                <td data-label="" class="text-right"><a class="btn btn-ghost btn-sm" href="{% url 'appointments:update' appointment.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if past_appointments|length >= tab_limit %}<div class="card-footer muted small">Showing the latest {{ tab_limit }}.</div>{% endif %}
+    {% else %}
+      <div class="card-body"><p class="muted mb-0">No past appointments.</p></div>
+    {% endif %}
+  </section>
+</div>

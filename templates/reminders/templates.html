@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Message templates{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/reminders.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'reminders:list' %}">Reminders</a><span aria-hidden="true">/</span><span>Message templates</span></div>
+    <h1>Message templates</h1>
+    <p class="subtitle">The wording of the WhatsApp messages the app prepares for your patients (English).</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'accounts:clinic_settings' %}">{% include "includes/icon.html" with name="settings" %}Reminder timing</a>
+  </div>
+</div>
+
+<div class="grid-sidebar">
+  <div class="stack">
+    {% for card in cards %}
+      <section class="card" id="template-{{ card.kind }}" aria-labelledby="template-title-{{ card.kind }}">
+        <div class="card-header">
+          <div>
+            <h2 id="template-title-{{ card.kind }}">{{ card.label }}</h2>
+            <div class="muted small">{{ card.help }}</div>
+          </div>
+          {% if card.custom %}
+            <span class="badge badge-primary">Your wording</span>
+          {% else %}
+            <span class="badge badge-muted">Standard wording</span>
+          {% endif %}
+        </div>
+        <form method="post" action="{% url 'reminders:templates' %}#template-{{ card.kind }}">
+          {% csrf_token %}
+          {{ card.form.kind }}
+          <div class="card-body">
+            <div class="grid-2">
+              <div>{% include "includes/field.html" with field=card.form.body %}</div>
+              <div>
+                <div class="form-section-title">Preview <span class="muted small">(made-up patient)</span></div>
+                <div class="wa-chat"><div class="wa-bubble" id="preview-{{ card.kind }}">{{ card.preview }}</div></div>
+              </div>
+            </div>
+            {% for warning in card.warnings %}
+              <div class="alert alert-warning mt-2 mb-0">{% include "includes/icon.html" with name="alert" %}<div>{{ warning }}</div></div>
+            {% endfor %}
+          </div>
+          <div class="card-footer form-actions">
+            <button type="submit" name="action" value="save" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save</button>
+            <button type="submit" name="action" value="preview" class="btn btn-secondary" data-no-js-only>{% include "includes/icon.html" with name="eye" %}Preview</button>
+            {% if card.custom %}
+              <button type="submit" name="action" value="reset" class="btn btn-ghost" formnovalidate
+                      data-confirm="Go back to the standard wording? Your changes to this message will be lost.">
+                {% include "includes/icon.html" with name="repeat" %}Reset to default
+              </button>
+              <span class="muted small">Changed {{ card.custom.updated_at|date:"j M Y" }}</span>
+            {% endif %}
+          </div>
+        </form>
+      </section>
+    {% endfor %}
+  </div>
+
+  <aside class="card rm-placeholders">
+    <div class="card-header"><h2>Placeholders</h2></div>
+    <div class="card-body stack-sm">
+      <p class="muted small mb-0">Type these exactly, with the curly brackets. Each one is filled in for the patient when the reminder is prepared.</p>
+      <dl class="rm-placeholder-list">
+        {% for name, description in placeholders.items %}
+          <dt><code>{% templatetag openbrace %}{{ name }}{% templatetag closebrace %}</code></dt>
+          <dd>{{ description }}</dd>
+        {% endfor %}
+      </dl>
+      <p class="muted small mb-0">Changes apply to new reminders. Reminders already prepared keep their wording; you can still edit each one before sending.</p>
+    </div>
+  </aside>
+</div>
+
+{{ samples|json_script:"template-samples" }}
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/reminders.js' %}" defer></script>{% endblock %}

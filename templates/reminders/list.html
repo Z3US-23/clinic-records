@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+
+{% block title %}Reminders{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/reminders.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Reminders</h1>
+    <p class="subtitle">WhatsApp messages prepared for your patients. Check each one, then send it with one tap.</p>
+  </div>
+  <div class="page-actions">
+    {% if is_owner %}
+      <a class="btn btn-secondary" href="{% url 'reminders:templates' %}">{% include "includes/icon.html" with name="message" %}Message templates</a>
+    {% endif %}
+    <a class="btn btn-primary" href="{% url 'reminders:create' %}">{% include "includes/icon.html" with name="plus" %}New message</a>
+  </div>
+</div>
+
+<div class="alert alert-info" data-reminders-help>
+  {% include "includes/icon.html" with name="info" %}
+  <div>
+    <strong>How sending works:</strong> tap <strong>Send on WhatsApp</strong>. WhatsApp opens with the message already
+    typed — press send there. The reminder then moves to <strong>Sent</strong>.
+    If a patient has no WhatsApp number, call them instead.
+  </div>
+  <button type="button" class="alert-close" aria-label="Hide this tip" data-dismiss>&times;</button>
+</div>
+
+<nav class="tabs rm-tabs" aria-label="Reminder lists">
+  {% for tab in tabs %}
+    <a class="tab{% if tab.active %} active{% endif %}" href="{{ tab.url }}"{% if tab.active %} aria-current="page"{% endif %}>
+      {{ tab.label }}
+      {% if tab.count %}<span class="badge {% if tab.key == 'due' %}badge-warning{% else %}badge-muted{% endif %}">{{ tab.count }}</span>{% endif %}
+    </a>
+  {% endfor %}
+</nav>
+
+{% if current_tab == "sent" or current_tab == "skipped" %}
+  <p class="muted small">Showing the last {{ recent_days }} days.</p>
+{% endif %}
+
+<div class="card">
+  {% if reminders %}
+    <div class="table-wrap">
+      <table class="table table-stack rm-table">
+        <thead>
+          <tr>
+            <th>Patient</th>
+            <th>Type</th>
+            <th>{% if current_tab == "sent" %}Sent{% else %}Send on{% endif %}</th>
+            <th>Message</th>
+            <th><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reminders %}
+            <tr id="reminder-{{ r.pk }}">
+              <td data-label="Patient">
+                <div>
+                  <a class="row-link" href="{% url 'patients:detail' r.patient.pk %}">{{ r.patient.full_name }}</a>
+                  <div class="muted small nowrap">
+                    {% if r.has_whatsapp %}{{ r.patient.whatsapp_number|phone_display }}{% else %}{{ r.patient.phone|default:"No phone" }}{% endif %}
+                  </div>
+                </div>
+              </td>
+              <td data-label="Type">
+                <div>
+                  <span class="badge {{ r.kind|badge_class }}">{{ r.get_kind_display }}</span>
+                  {% if r.appointment_at %}
+                    <div class="muted small nowrap">Appointment {{ r.appointment_at|date:"j M" }}, {{ r.appointment_at|time:"g:i a" }}</div>
+                  {% elif r.follow_up_on %}
+                    <div class="muted small nowrap">Follow-up {{ r.follow_up_on|date:"j M" }}</div>
+                  {% endif %}
+                </div>
+              </td>
+              <td data-label="{% if current_tab == 'sent' %}Sent{% else %}Send on{% endif %}">
+                <div>
+                  {% if current_tab == "sent" %}
+                    <span class="nowrap">{{ r.sent_at|date:"j M Y" }}, {{ r.sent_at|time:"g:i a" }}</span>
+                    <div class="muted small">by {{ r.sent_by.full_name|default:"a former staff member" }}</div>
+                  {% else %}
+                    <span class="nowrap">{% if r.due_date == today %}Today{% else %}{{ r.due_date|date:"j M Y" }}{% endif %}</span>
+                    {% if r.status == "pending" and r.days_late %}
+                      <div><span class="badge badge-danger">{{ r.days_late }} day{{ r.days_late|pluralize }} late</span></div>
+                    {% endif %}
+                  {% endif %}
+                </div>
+              </td>
+              <td data-label="Message" class="rm-message-cell">
+                <details class="rm-preview">
+                  <summary><span class="rm-summary-text">{{ r.message|truncatechars:80 }}</span></summary>
+                  <div class="wa-chat"><div class="wa-bubble">{{ r.message }}</div></div>
+                </details>
+              </td>
+              <td data-label="" class="rm-actions-cell">
+                <div class="btn-group rm-actions">
+                  {% if r.status == "pending" %}
+                    {% if r.patient.is_archived %}
+                      <span class="badge badge-muted">Patient archived</span>
+                    {% elif r.has_whatsapp %}
+                      <form method="post" action="{% url 'reminders:send' r.pk %}" class="inline-form" data-wa-send>
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ back_url }}">
+                        <button type="submit" class="btn btn-whatsapp btn-sm">{% include "includes/icon.html" with name="whatsapp" size="sm" %}Send on WhatsApp</button>
+                      </form>
+                    {% else %}
+                      {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient call_number=r.call_number %}
+                    {% endif %}
+                    <a class="btn btn-ghost btn-sm" href="{% url 'reminders:update' r.pk %}?next={{ back_url|urlencode }}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                    <form method="post" action="{% url 'reminders:skip' r.pk %}" class="inline-form" data-confirm="Skip this reminder? It will not be sent.">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ back_url }}">
+                      <button type="submit" class="btn btn-ghost btn-sm">{% include "includes/icon.html" with name="skip" size="sm" %}Skip</button>
+                    </form>
+                  {% elif r.status == "sent" %}
+                    {% if r.has_whatsapp and not r.patient.is_archived %}
+                      <form method="post" action="{% url 'reminders:send' r.pk %}" class="inline-form" data-wa-send>
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ back_url }}">
+                        <button type="submit" class="btn btn-secondary btn-sm">{% include "includes/icon.html" with name="repeat" size="sm" %}Send again</button>
+                      </form>
+                    {% elif not r.patient.is_archived %}
+                      {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient call_number=r.call_number %}
+                    {% endif %}
+                  {% elif not r.patient.is_archived %}
+                    <a class="btn btn-ghost btn-sm" href="{% url 'reminders:create' %}?patient={{ r.patient.pk }}">{% include "includes/icon.html" with name="message" size="sm" %}New message</a>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include "includes/pagination.html" %}
+  {% else %}
+    {% url 'reminders:create' as create_url %}
+    {% if current_tab == "due" %}
+      {% include "includes/empty_state.html" with icon="check" title="Nothing to send right now" text="Reminders are prepared automatically before appointments and follow-up dates, and show up here on the day they should go out." action_url=create_url action_label="Write a message" %}
+    {% elif current_tab == "upcoming" %}
+      {% include "includes/empty_state.html" with icon="clock" title="Nothing coming up" text="Messages saved for a later day appear here until it is time to send them." %}
+    {% elif current_tab == "sent" %}
+      {% include "includes/empty_state.html" with icon="whatsapp" title="No reminders sent recently" text="Reminders you send on WhatsApp are listed here for 30 days." %}
+    {% else %}
+      {% include "includes/empty_state.html" with icon="skip" title="No skipped reminders" text="Reminders you skip, or that are no longer needed (for example a cancelled appointment), are listed here for 30 days." %}
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/reminders.js' %}" defer></script>{% endblock %}

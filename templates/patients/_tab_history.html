@@ -1,0 +1,76 @@
+{% load core_tags appointment_tags %}
+{% comment %}
+"History" tab (clinicians only): visits, lab results and past appointments without a visit, newest first.
+Expects: patient, timeline (see apps.patients.services.history_timeline), timeline_total, timeline_limit.
+{% endcomment %}
+{% if timeline %}
+  <ol class="timeline">
+    {% for entry in timeline %}
+      {% if entry.kind == "visit" %}
+        {% with visit=entry.obj %}
+          <li class="timeline-item is-visit">
+            <span class="timeline-dot">{% include "includes/icon.html" with name="clipboard" %}</span>
+            <div class="timeline-date">{{ entry.when|date:"j M Y" }} · {{ entry.when|time:"g:i a" }} · Visit</div>
+            <div class="timeline-card">
+              <div class="row-between">
+                <strong>{{ visit.chief_complaint }}</strong>
+                {% if entry.doctor_name %}<span class="muted small">{{ entry.doctor_name }}</span>{% endif %}
+              </div>
+              {% if visit.diagnosis %}<div><span class="muted">Diagnosis:</span> {{ visit.diagnosis }}</div>{% endif %}
+              {% if entry.vitals %}<div class="muted small">{{ entry.vitals|join:" · " }}</div>{% endif %}
+              <div class="row timeline-links">
+                {% if visit.medicine_count %}
+                  <span class="badge badge-primary">{% include "includes/icon.html" with name="pill" size="sm" %}{{ visit.medicine_count }} medicine{{ visit.medicine_count|pluralize }}</span>
+                {% endif %}
+                {% if visit.follow_up_date %}<span class="badge badge-info">Follow-up {{ visit.follow_up_date|date:"j M Y" }}</span>{% endif %}
+                <a href="{% url 'clinical:visit_detail' visit.pk %}">Open visit</a>
+                <a href="{% url 'clinical:prescription_print' visit.pk %}">{% include "includes/icon.html" with name="printer" size="sm" %} Print prescription</a>
+              </div>
+            </div>
+          </li>
+        {% endwith %}
+      {% elif entry.kind == "lab" %}
+        {% with lab=entry.obj %}
+          <li class="timeline-item is-lab">
+            <span class="timeline-dot">{% include "includes/icon.html" with name="flask" %}</span>
+            <div class="timeline-date">{{ entry.when|date:"j M Y" }} · Lab result</div>
+            <div class="timeline-card">
+              <div class="row-between">
+                <strong>{{ lab.test_name }}</strong>
+                {% if lab.is_abnormal %}<span class="badge badge-danger">Abnormal</span>{% endif %}
+              </div>
+              {% if lab.result_text %}<div class="pre-line">{{ lab.result_text|truncatechars:200 }}</div>{% endif %}
+              {% if lab.file %}
+                <div class="row timeline-links">
+                  <a href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="file" size="sm" %} View report</a>
+                </div>
+              {% endif %}
+            </div>
+          </li>
+        {% endwith %}
+      {% else %}
+        {% with appointment=entry.obj %}
+          <li class="timeline-item is-appointment">
+            <span class="timeline-dot">{% include "includes/icon.html" with name="calendar" %}</span>
+            <div class="timeline-date">{{ entry.when|date:"j M Y" }} · {{ entry.when|time:"g:i a" }} · Appointment</div>
+            <div class="timeline-card">
+              <div class="row-between">
+                <span class="badge {{ appointment.status|badge_class }}">{{ appointment.status|status_label }}</span>
+                {% if entry.doctor_name %}<span class="muted small">{{ entry.doctor_name }}</span>{% endif %}
+              </div>
+              {% if appointment.reason %}<div class="muted">{{ appointment.reason }}</div>{% endif %}
+            </div>
+          </li>
+        {% endwith %}
+      {% endif %}
+    {% endfor %}
+  </ol>
+  {% if timeline_total > timeline_limit %}
+    <p class="muted small mt-2">Showing the latest {{ timeline_limit }} of {{ timeline_total }} entries. Older visits are under <a href="{% url 'clinical:visit_list' %}">Visits</a>.</p>
+  {% endif %}
+{% else %}
+  <div class="card">
+    {% url 'clinical:visit_create' patient.pk as visit_url %}
+    {% include "includes/empty_state.html" with icon="clipboard" title="No medical history yet" text="Visits, lab results and past appointments will show here, newest first." action_url=visit_url action_label="Start a visit" %}
+  </div>
+{% endif %}

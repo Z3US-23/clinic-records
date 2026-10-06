@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+
+{% block title %}{{ patient.full_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/patients.css' %}">{% endblock %}
+
+{% block content %}
+<div class="breadcrumbs">
+  <a href="{% url 'patients:list' %}{% if patient.is_archived %}?archived=1{% endif %}">Patients</a><span aria-hidden="true">›</span><span>{{ patient.mrn }}</span>
+</div>
+
+{# ---------- Header card: who the patient is and what you can do ---------- #}
+<section class="card profile-card mb-2" aria-labelledby="patient-name">
+  <div class="card-body profile-head">
+    <span class="avatar avatar-lg" aria-hidden="true">{{ patient.full_name|initials }}</span>
+    <div class="profile-main">
+      <div class="row">
+        <h1 id="patient-name" class="profile-name">{{ patient.full_name }}</h1>
+        {% if is_clinician and patient.allergies %}{# safety flag above the fold; full list in the Clinical summary #}
+          <a class="badge badge-danger allergy-flag" href="#clinical-summary-title" title="Allergies: {{ patient.allergies }}">{% include "includes/icon.html" with name="alert" size="sm" %}<span class="truncate">Allergies: {{ patient.allergies }}</span></a>
+        {% endif %}
+        {% if patient.is_archived %}<span class="badge badge-muted">Archived</span>{% endif %}
+        {% if reminders_off %}
+          <span class="badge badge-warning" title="{% if not patient.reminders_opt_in %}Patient did not agree to WhatsApp reminders{% else %}No valid WhatsApp number{% endif %}">Reminders off</span>
+        {% endif %}
+      </div>
+      <div class="profile-facts">
+        <span><span class="subtle">MR no.</span> {{ patient.mrn }}</span>
+        {% if patient.age_display %}
+          <span>{{ patient.age_display }}{% if patient.dob_is_estimated %} (approx.){% endif %}</span>
+        {% else %}
+          <span class="subtle">Age not recorded</span>
+        {% endif %}
+        <span>{{ patient.get_sex_display }}</span>
+        {% if patient.guardian_name %}<span><span class="subtle">Father / husband:</span> {{ patient.guardian_name }}</span>{% endif %}
+      </div>
+      <dl class="kv profile-contact">
+        <dt>Mobile</dt>
+        <dd>{% if phone_tel %}<a href="tel:+{{ phone_tel }}">{% include "includes/icon.html" with name="phone" size="sm" %} {{ patient.phone }}</a>{% else %}{{ patient.phone }}{% endif %}</dd>
+        <dt>WhatsApp</dt>
+        <dd>{% if patient.whatsapp_number %}{{ patient.whatsapp_number|phone_display }}{% if not patient.reminders_opt_in %} <span class="subtle">(no reminders)</span>{% endif %}{% else %}<span class="subtle">No valid number</span>{% endif %}</dd>
+        {% if patient.date_of_birth %}
+          <dt>Date of birth</dt>
+          <dd>{{ patient.date_of_birth|date:"j M Y" }}{% if patient.dob_is_estimated %} <span class="subtle">(worked out from age)</span>{% endif %}</dd>
+        {% endif %}
+        {% if patient.city or patient.address %}
+          <dt>Address</dt>
+          <dd>{{ patient.address }}{% if patient.address and patient.city %}, {% endif %}{{ patient.city }}</dd>
+        {% endif %}
+        {% if patient.notes %}
+          <dt>Notes</dt>
+          <dd class="pre-line">{{ patient.notes }}</dd>
+        {% endif %}
+      </dl>
+    </div>
+  </div>
+  <div class="card-footer profile-actions no-print">
+    {% if is_clinician %}
+      <a class="btn btn-primary" href="{% url 'clinical:visit_create' patient.pk %}">{% include "includes/icon.html" with name="clipboard" %}New visit</a>
+    {% endif %}
+    {% if not patient.is_archived %}{# booking and messages are for active patients: restore first #}
+      <a class="btn {% if is_clinician %}btn-secondary{% else %}btn-primary{% endif %}" href="{% url 'appointments:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="calendar-plus" %}Book appointment</a>
+      {% if patient.whatsapp_number %}
+        <a class="btn btn-whatsapp" href="{% url 'reminders:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="whatsapp" %}Send WhatsApp message</a>
+      {% endif %}
+    {% endif %}
+    {% if is_clinician %}
+      <a class="btn btn-secondary" href="{% url 'clinical:lab_create' patient.pk %}">{% include "includes/icon.html" with name="flask" %}Add lab result</a>
+    {% endif %}
+    <a class="btn btn-ghost" href="{% url 'patients:update' patient.pk %}">{% include "includes/icon.html" with name="edit" %}Edit</a>
+    {% if is_clinician %}
+      <form method="post" action="{% url 'patients:archive' patient.pk %}" class="inline-form profile-archive"
+            data-confirm="{% if patient.is_archived %}Restore {{ patient.full_name }} to the patient list?{% else %}Archive {{ patient.full_name }}? They will be hidden from the patient list and search. Their records are kept.{% endif %}">
+        {% csrf_token %}
+        {% if patient.is_archived %}
+          <button type="submit" class="btn btn-secondary">{% include "includes/icon.html" with name="repeat" %}Restore</button>
+        {% else %}
+          <button type="submit" class="btn btn-danger-outline">{% include "includes/icon.html" with name="trash" %}Archive</button>
+        {% endif %}
+      </form>
+    {% endif %}
+  </div>
+</section>
+
+{% if patient.is_archived %}
+  <div class="alert alert-info">{% include "includes/icon.html" with name="info" %}<div>This patient is archived: hidden from the patient list, search and reminders. All their records are kept.{% if is_clinician %} Press <strong>Restore</strong> to book appointments or send messages again.{% else %} A doctor can restore them if they come back.{% endif %}</div></div>
+{% endif %}
+
+{% if is_clinician and summary %}
+  {% include "patients/_clinical_summary.html" %}
+{% endif %}
+
+{# ---------- Tabs ---------- #}
+<nav class="tabs" aria-label="Patient record">
+  {% for key, label in tabs %}
+    <a class="tab {% if key == tab %}active{% endif %}" href="?tab={{ key }}"{% if key == tab %} aria-current="page"{% endif %}>
+      {{ label }}{% if key == "appointments" and upcoming_count %} <span class="badge badge-info">{{ upcoming_count }}</span>{% endif %}
+    </a>
+  {% endfor %}
+</nav>
+
+{% if tab == "history" and is_clinician %}
+  {% include "patients/_tab_history.html" %}
+{% elif tab == "labs" and is_clinician %}
+  {% include "patients/_tab_labs.html" %}
+{% elif tab == "messages" %}
+  {% include "patients/_tab_messages.html" %}
+{% else %}
+  {% include "patients/_tab_appointments.html" %}
+{% endif %}
+{% endblock %}

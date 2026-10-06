@@ -1,0 +1,45 @@
+<!doctype html>
+{% comment %}
+  Shown when the server hits an unexpected error. Django renders this with an EMPTY context, and the
+  error may have come from the database or static files, so this page must stand alone:
+  no {% url %}, no {% static %}, no context-processor variables, no extends. Styles are inline.
+{% endcomment %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f766e">
+  <title>Something went wrong</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+           box-sizing: border-box; background: #f3f6f8; color: #13202b;
+           font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif; }
+    main { width: 100%; max-width: 420px; background: #fff; border: 1px solid #e1e7eb; border-radius: 14px; padding: 28px; }
+    .mark { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #0f766e;
+            color: #fff; font-weight: 800; font-size: 18px; margin-bottom: 16px; }
+    .code { font-size: 0.85rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8492a0; }
+    h1 { font-size: 1.4rem; margin: 4px 0 8px; }
+    p { color: #5a6876; margin: 0 0 16px; }
+    a.btn { display: block; text-align: center; padding: 11px 14px; border-radius: 7px; background: #0f766e; color: #fff;
+            font-weight: 600; text-decoration: none; }
+    a.btn:hover { background: #0c5f58; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0f1418; color: #e6edf2; }
+      main { background: #161d22; border-color: #2a353d; }
+      p { color: #a3b1bc; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">+</div>
+    <div class="code">Error 500</div>
+    <h1>Something went wrong on our side</h1>
+    <p>Sorry, the page couldn't be loaded. Your data is safe. Please wait a minute and try again.
+      If it keeps happening, tell the clinic owner what you were doing when it happened.</p>
+    <a class="btn" href="/">Go to Today</a>
+  </main>
+</body>
+</html>

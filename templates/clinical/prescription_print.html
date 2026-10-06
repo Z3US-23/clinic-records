@@ -1,0 +1,97 @@
+{% load static clinical_tags %}<!doctype html>
+{% comment %}
+Standalone printable prescription (does not use base.html). Sized for A5 paper; also prints fine on A4.
+data-theme="light" keeps the "paper" white even when the phone/computer is in dark mode.
+{% endcomment %}
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Prescription – {{ patient.full_name }} – {{ visit.visit_date|date:"j M Y" }}</title>
+  <link rel="icon" href="{% static 'icons/icon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/clinical.css' %}">
+</head>
+<body class="rx-body">
+  <div class="rx-toolbar no-print">
+    <a class="btn btn-secondary" href="{{ visit.get_absolute_url }}">{% include "includes/icon.html" with name="chevron-left" %}Back to visit</a>
+    <button type="button" class="btn btn-primary" data-print hidden>{% include "includes/icon.html" with name="printer" %}Print</button>
+  </div>
+
+  <article class="rx-sheet" aria-label="Prescription">
+    <header class="rx-letterhead">
+      <div class="rx-clinic">
+        <div class="rx-clinic-name">{{ clinic.name }}</div>
+        {% if clinic.prescription_header %}<div class="pre-line rx-small">{{ clinic.prescription_header }}</div>{% endif %}
+        <div class="rx-small">
+          {% if clinic.address %}{{ clinic.address }}{% if clinic.city %}, {% endif %}{% endif %}{{ clinic.city }}
+          {% if clinic.phone %}<br>Phone: {{ clinic.phone }}{% endif %}
+        </div>
+      </div>
+      <div class="rx-doctor">
+        <div class="rx-doctor-name">{% if membership %}{{ membership.display_name }}{% else %}{{ visit.doctor.full_name }}{% endif %}</div>
+        {% if membership.qualifications %}<div class="rx-small">{{ membership.qualifications }}</div>{% endif %}
+        {% if membership.registration_number %}<div class="rx-small">Reg. No. {{ membership.registration_number }}</div>{% endif %}
+      </div>
+    </header>
+
+    <section class="rx-patient">
+      <div><span class="rx-label">Patient</span> <strong>{{ patient.full_name }}</strong></div>
+      <div><span class="rx-label">Age/Sex</span> {% if patient.age_display %}{{ patient.age_display }} / {% endif %}{{ patient.get_sex_display }}</div>
+      <div><span class="rx-label">MR No.</span> {{ patient.mrn }}</div>
+      <div><span class="rx-label">Date</span> {{ visit.visit_date|date:"j M Y" }}</div>
+    </section>
+
+    {% if patient.allergies %}
+      <p class="rx-allergies"><strong>Allergies:</strong> {{ patient.allergies }}</p>
+    {% endif %}
+
+    {% if vitals %}
+      <p class="rx-vitals">{% for vital in vitals %}<span>{{ vital.label }} {{ vital.text }}</span>{% if not forloop.last %} · {% endif %}{% endfor %}</p>
+    {% endif %}
+
+    {% if visit.diagnosis %}
+      <p class="rx-diagnosis"><span class="rx-label">Diagnosis</span> <strong>{{ visit.diagnosis }}</strong></p>
+    {% endif %}
+
+    <section class="rx-main">
+      <div class="rx-symbol" role="img" aria-label="Prescription">&#8478;</div>
+      {% if items %}
+        <ol class="rx-medicines">
+          {% for item in items %}
+            <li>
+              <strong>{{ item.medicine }}</strong>
+              {% if item|rx_details %}<div>{{ item|rx_details }}</div>{% endif %}
+              {% if item.instructions %}<div class="rx-instructions">{{ item.instructions }}</div>{% endif %}
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="rx-small">No medicines prescribed.</p>
+      {% endif %}
+    </section>
+
+    {% if visit.plan %}
+      <section class="rx-advice">
+        <div class="rx-label">Advice</div>
+        <div class="pre-line">{{ visit.plan }}</div>
+      </section>
+    {% endif %}
+
+    {% if visit.follow_up_date %}
+      <p class="rx-follow-up"><strong>Follow-up:</strong> please come back on {{ visit.follow_up_date|date:"l, j M Y" }}.</p>
+    {% endif %}
+
+    <footer class="rx-footer">
+      <div class="pre-line rx-small">{{ clinic.prescription_footer }}</div>
+      <div class="rx-signature">
+        Signature
+        <div class="rx-small">{% if membership %}{{ membership.display_name }}{% else %}{{ visit.doctor.full_name }}{% endif %}</div>
+      </div>
+    </footer>
+  </article>
+
+  <script src="{% static 'js/clinical.js' %}" defer></script>
+</body>
+</html>

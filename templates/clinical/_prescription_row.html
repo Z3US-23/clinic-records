@@ -1,0 +1,20 @@
+{% comment %}
+One medicine row of the prescription formset. Also rendered inside a <template> as the
+"empty form" that clinical.js copies when "Add medicine" is pressed (__prefix__ -> row number).
+{% endcomment %}
+<div class="formset-row" data-formset-row>
+  {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+  {% for field in form.visible_fields %}{% if field.name != "DELETE" %}
+    <div class="field {% if field.errors %}has-error{% endif %}">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.errors %}{{ field.errors }}{% endif %}
+    </div>
+  {% endif %}{% endfor %}
+  <div class="field rx-row-remove">
+    {% if form.DELETE %}
+      <label class="rx-remove-check" for="{{ form.DELETE.id_for_label }}">{{ form.DELETE }}Remove</label>
+    {% endif %}
+  </div>
+  {% if form.non_field_errors %}<div class="rx-row-errors">{{ form.non_field_errors }}</div>{% endif %}
+</div>

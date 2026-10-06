@@ -1,0 +1,44 @@
+{% load core_tags %}
+{% comment %}
+"Messages" tab (all roles): this patient's WhatsApp reminders. Expects: patient, reminders.
+{% endcomment %}
+<section class="card">
+  <div class="card-header">
+    <h2>WhatsApp messages</h2>
+    {% if patient.whatsapp_number and not patient.is_archived %}
+      <a class="btn btn-whatsapp btn-sm" href="{% url 'reminders:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="whatsapp" size="sm" %}New message</a>
+    {% endif %}
+  </div>
+  {% if reminders %}
+    <div class="table-wrap">
+      <table class="table table-stack">
+        <thead><tr><th scope="col">Type</th><th scope="col">Due</th><th scope="col">Status</th><th scope="col">Sent</th><th scope="col">Message</th></tr></thead>
+        <tbody>
+          {% for reminder in reminders %}
+            <tr>
+              <td data-label="Type"><span class="badge {{ reminder.kind|badge_class }}">{{ reminder.get_kind_display }}</span></td>
+              <td data-label="Due" class="nowrap">{{ reminder.due_date|date:"j M Y" }}</td>
+              <td data-label="Status"><span class="badge {{ reminder.status|badge_class }}">{{ reminder.get_status_display }}</span></td>
+              <td data-label="Sent" class="nowrap">
+                {% if reminder.sent_at %}{{ reminder.sent_at|date:"j M Y" }}, {{ reminder.sent_at|time:"g:i a" }}{% if reminder.sent_by %}<div class="subtle small">by {{ reminder.sent_by }}</div>{% endif %}{% else %}<span class="subtle">—</span>{% endif %}
+              </td>
+              <td data-label="Message" class="message-cell">
+                <details class="message-details">
+                  <summary>Show message</summary>
+                  <p class="pre-line mb-0">{{ reminder.message }}</p>
+                </details>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body">
+      <p class="muted mb-0">
+        No messages yet.
+        {% if not patient.whatsapp_number %}Add a valid WhatsApp number to send reminders.{% elif not patient.reminders_opt_in %}This patient has not agreed to reminders.{% else %}Appointment and follow-up reminders will appear here.{% endif %}
+      </p>
+    </div>
+  {% endif %}
+</section>

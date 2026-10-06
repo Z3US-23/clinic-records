@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}New message{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/reminders.css' %}">{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'reminders:list' %}">Reminders</a><span aria-hidden="true">/</span><span>New message</span></div>
+    <h1>New message</h1>
+    <p class="subtitle">Write a WhatsApp message to {{ patient.full_name }}.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-ghost" href="{% url 'reminders:create' %}">{% include "includes/icon.html" with name="search" %}Choose another patient</a>
+  </div>
+</div>
+
+{% include "includes/patient_banner.html" with patient=patient %}
+
+{% if not has_whatsapp %}
+  <div class="alert alert-warning">
+    {% include "includes/icon.html" with name="alert" %}
+    <div>
+      {{ patient.full_name }} has no valid WhatsApp number, so you can only save this message for now.
+      <a href="{% url 'patients:update' patient.pk %}">Fix the number</a>{% if patient.phone %} or call {{ patient.phone }}{% endif %}.
+    </div>
+  </div>
+{% endif %}
+{% if not patient.reminders_opt_in %}
+  <div class="alert alert-warning">
+    {% include "includes/icon.html" with name="alert" %}
+    <div>This patient asked not to get WhatsApp reminders. Only send this message if they are expecting it.</div>
+  </div>
+{% endif %}
+
+<form method="post" action="{% url 'reminders:create' %}?patient={{ patient.pk }}" class="card">
+  {% csrf_token %}
+  <div class="card-body form">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% include "includes/icon.html" with name="alert" %}<div>{{ form.non_field_errors|join:" " }}</div></div>
+    {% endif %}
+    {% include "includes/field.html" with field=form.message %}
+    <div>
+      <div class="form-section-title">How the patient will see it</div>
+      <div class="wa-chat"><div class="wa-bubble" id="message-preview">{{ form.message.value|default_if_none:"" }}</div></div>
+    </div>
+  </div>
+  {# "Save for later" comes first in the page so pressing Enter in the date box never sends. CSS shows "Send now" first. #}
+  <div class="card-footer rm-compose-actions">
+    <div class="rm-later">
+      {% include "includes/field.html" with field=form.due_date %}
+      <button type="submit" name="action" value="save" class="btn btn-secondary">{% include "includes/icon.html" with name="clock" %}Save to send later</button>
+    </div>
+    {% if has_whatsapp %}
+      <div class="rm-now">
+        <button type="submit" name="action" value="send" class="btn btn-whatsapp btn-lg" data-wa-send data-after-url="{% url 'reminders:list' %}?tab=sent">
+          {% include "includes/icon.html" with name="whatsapp" %}Send now on WhatsApp
+        </button>
+      </div>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/reminders.js' %}" defer></script>{% endblock %}

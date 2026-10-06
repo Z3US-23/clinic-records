@@ -1,0 +1,11 @@
+{% extends "base_public.html" %}
+{% block title %}You're offline{% endblock %}
+{% block content %}
+<div class="stack-sm">
+  <h1>You're offline</h1>
+  <p class="mb-0">Patient records need an internet connection.</p>
+  <p class="muted">Check your Wi-Fi or mobile data, then try again. To keep patient information private, records are never stored on this device.</p>
+  {# href="" reloads the page the user was trying to open #}
+  <a class="btn btn-primary btn-block" href="">{% include "includes/icon.html" with name="repeat" %}Try again</a>
+</div>
+{% endblock %}

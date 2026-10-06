@@ -18,8 +18,14 @@ patient records, medical history, appointments, and WhatsApp follow-up reminders
 ```bash
 .venv/Scripts/python manage.py runserver          # Windows venv path
 .venv/Scripts/python manage.py test               # all tests
-.venv/Scripts/python manage.py seed_demo          # demo clinic with fake patients
+.venv/Scripts/python manage.py seed_demo --reset  # (re)create the demo clinic with fake patients
+.venv/Scripts/python manage.py generate_reminders # daily job: prepare WhatsApp reminders
 ```
+
+`seed_demo --reset` recreates **Demo Family Clinic** with three logins: `demo-owner@clinic.test`,
+`demo-doctor@clinic.test`, `demo-reception@clinic.test` (password `demo-pass-2026`, or `--password`).
+It only ever touches the demo clinic. Demo phone numbers use the unallocated `0390-` prefix so
+"Send on WhatsApp" can never reach a real person: **keep it that way**.
 
 ## Layout & ownership
 
@@ -31,8 +37,9 @@ apps/core/         dashboard, audit log page, export/backup, PWA, seed_demo, sha
    audit.py        log_action(request, Action.X, obj, summary)
    phone.py        normalize_phone(raw, country), whatsapp_link(number, text), format_phone_display()
    middleware.py   sets request.clinic / request.membership, activates clinic timezone, no-cache for staff pages
-   testing.py      ClinicTestCase + factories (two clinics, owner/doctor/receptionist)
+   testing.py      ClinicTestCase + factories (two clinics, owner/doctor/receptionist; fast password hasher)
    templatetags/core_tags.py   |badge_class  |initials  |phone_display
+   tests_smoke.py  every URL name x every role: status codes, roles, clinic isolation, POST-only
 apps/accounts/     User (email login), Clinic, Membership(role); login, signup, staff, clinic settings
 apps/patients/     Patient; list/search, create/edit, profile = medical-history dashboard, CSV import
 apps/clinical/     Visit (+vitals, diagnosis, follow_up_date), PrescriptionItem, LabResult; print prescription
@@ -112,19 +119,19 @@ Models are defined already — read `apps/<app>/models.py` before writing views.
 | `clinical:lab_file <pk>`, `clinical:lab_delete <pk>` | | delete is POST |
 | `appointments:day` | `/appointments/?date=YYYY-MM-DD&doctor=<id>` | |
 | `appointments:week` | `/appointments/week/?start=YYYY-MM-DD` | |
-| `appointments:create` | `/appointments/new/?patient=<id>&date=YYYY-MM-DD` | |
+| `appointments:create` | `/appointments/new/?patient=<id>&date=YYYY-MM-DD&doctor=<id>` | no `patient` → patient search first |
 | `appointments:update <pk>` | | |
 | `appointments:set_status <pk>` | POST `status=<value>` | |
 | `public:confirm <token>` | `/c/<token>/` | public |
-| `reminders:list` | `/reminders/?tab=due|upcoming|sent` | |
+| `reminders:list` | `/reminders/?tab=due|upcoming|sent|skipped` | |
 | `reminders:create` | `/reminders/new/?patient=<id>` | custom message |
 | `reminders:templates` | `/reminders/templates/` | owner |
 | `reminders:send <pk>` | POST → marks sent, 302 to wa.me | |
 | `reminders:skip <pk>` | POST | |
 | `reminders:update <pk>` | edit message before sending | |
 
-Each `apps/<app>/urls.py` currently maps these names to `apps.core.placeholders.placeholder`.
-Replace placeholders with real views; **keep every name and path signature**.
+Every name maps to a real view. **Keep every name and path signature**: other apps link to them.
+`apps/core/tests_smoke.py` opens every one of them for every role, so a renamed or broken URL fails the tests.
 
 ## Cross-app service contract
 
@@ -134,18 +141,27 @@ Replace placeholders with real views; **keep every name and path signature**.
   Called by the dashboard and the reminders page; also by the `generate_reminders` management command (daily cron).
 - `apps.reminders.services.refresh_for_appointment(appointment, rescheduled=False)` — appointments app calls this after
   create, edit (pass `rescheduled=True` when date/time or doctor changed) and status changes. Cancelled / no-show /
-  completed → pending appointment reminders are removed; rescheduled → the reminder is re-prepared with the new time
+  seen / waiting / "wants another time", or the patient opted out → a pending appointment reminder is marked
+  **Skipped** (never deleted, so the history stays); rescheduled → the reminder is re-prepared with the new time
   (set back to "To send" even if the old one was sent); new → created now if already inside the reminder window.
 - `apps.reminders.services.refresh_for_visit(visit)` — clinical app calls this after a visit is saved. A new visit also
   makes earlier pending follow-up / missed-follow-up reminders for that patient unnecessary.
 - `Appointment.get_confirm_url()` — absolute public link (uses `settings.SITE_URL`).
 - `Patient.whatsapp_number` — normalized digits, set on save; `Patient.can_receive_whatsapp`.
+- `apps.patients.services.search_patients(queryset, q, country)` — the one patient search (name, MR number, phone
+  typed any way: "0300 123", "+92 300…", last digits). The list, top-bar search, booking picker and custom-message
+  search all use it.
+- `apps.appointments.status` — `STATUS_LABELS` (short staff words: Booked, Confirmed, Wants another time, Waiting,
+  Seen, Did not come, Cancelled), `ALLOWED_TRANSITIONS`, `can_change(current, new)`. A visit started from an appointment
+  only marks it Seen when `can_change` allows it (a cancelled appointment is never marked Seen).
 
 ## UI conventions
 
 - Staff pages: `{% extends "base.html" %}`, blocks `title`, `content`, optional `extra_js`, `content_class`
   (`content-narrow` for forms). Public pages: `{% extends "base_public.html" %}`.
 - `{% load core_tags %}` for `|badge_class`, `|initials`, `|phone_display`.
+- `{% load appointment_tags %}` for `{{ appt.status|status_label }}` (always use it to show an appointment status, never
+  `get_status_display`) and `{% appointment_actions appt %}` (the quick status buttons; they post back to the current page).
 - Page skeleton:
   ```html
   <div class="page-header">
@@ -161,16 +177,22 @@ Replace placeholders with real views; **keep every name and path signature**.
   `stat-grid > stat (stat-warning, stat-danger) > stat-label + stat-value + stat-note`, `tabs > tab.active`, `toolbar`,
   `empty-state`, `avatar (avatar-sm, avatar-lg)`, `patient-banner`, `form`, `form-grid`, `form-grid-3`, `span-2`, `field`,
   `form-actions`, `form-section`, `formset-row`, `grid-2`, `grid-3`, `grid-sidebar`, `stack`, `stack-sm`, `row`, `row-between`,
-  `muted`, `subtle`, `text-danger`, `nowrap`, `truncate`, `pre-line`, `inline-form`, `btn-group`, `no-print`, `print-only`, `mt-1..3`, `mb-1..3`.
+  `muted`, `subtle`, `text-danger`, `nowrap`, `truncate`, `pre-line`, `inline-form`, `btn-group`, `no-print`, `print-only`, `mt-1..3`, `mb-1..3`,
+  `visually-hidden` (screen-reader-only text, e.g. the header of an Actions column), `token` (waiting-room number),
+  `card-empty` (one quiet line inside a card when there is nothing to list).
 - Includes: `includes/icon.html` (`with name="calendar" size="sm|lg"`; names listed in the file),
   `includes/form_fields.html` (`with form=form grid=True`), `includes/field.html` (`with field=form.x`),
   `includes/pagination.html` (needs `page_obj`), `includes/empty_state.html`, `includes/patient_banner.html` (`with patient=p`).
 - Destructive buttons: `<form method="post" data-confirm="Cancel this appointment?">` — app.js asks first.
-- Dates shown like `6 Oct 2026` (`|date:"j M Y"`), times `3:30 pm` (`|time:"g:i a"`). HTML5 `type="date"`/`type="time"` inputs in forms.
+- Dates shown like `6 Oct 2026` (`|date:"j M Y"`), times with `|time:"g:i a"` (Django prints this as `3:30 p.m.`).
+  WhatsApp message text is plain text written by `apps.reminders.services.format_time` and reads `3:30 pm`.
+  HTML5 `type="date"`/`type="time"` inputs in forms.
 - Use Django messages for feedback after actions (`messages.success(request, "Appointment booked.")`).
 - Write for clinic staff: plain words ("Seen", "Did not come", "To send"), no jargon.
 
 ## Tests
 
-`apps/<app>/tests.py` (or a `tests/` package). Subclass `apps.core.testing.ClinicTestCase`.
+`apps/<app>/tests.py` (or a `tests/` package). Subclass `apps.core.testing.ClinicTestCase` (it switches to a fast
+password hasher for tests only; production hashing is unchanged). `force_login` writes a "Signed in" audit entry, so
+tests that count audit rows filter by action.
 Every feature must have tests for: happy path, clinic isolation (other clinic → 404), role restrictions, and POST-only actions.

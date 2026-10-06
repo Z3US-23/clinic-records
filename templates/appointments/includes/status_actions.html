@@ -1,0 +1,9 @@
+{% comment %}Rendered by {% appointment_actions appointment %} (apps/appointments/templatetags/appointment_tags.py).{% endcomment %}
+{% for action in actions %}
+  <form method="post" action="{% url 'appointments:set_status' appointment.pk %}" class="inline-form"{% if action.confirm %} data-confirm="{{ action.confirm }}"{% endif %}>
+    {% csrf_token %}
+    <input type="hidden" name="status" value="{{ action.status }}">
+    {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+    <button type="submit" class="btn {{ action.style }} btn-sm">{{ action.text }}</button>
+  </form>
+{% endfor %}

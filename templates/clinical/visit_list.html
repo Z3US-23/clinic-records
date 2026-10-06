@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visits{% endblock %}
+
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/clinical.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Visits</h1>
+    <p class="subtitle">Every consultation in this clinic, newest first. To start a new visit, open the patient's page.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="{% url 'patients:list' %}">{% include "includes/icon.html" with name="users" %}Find a patient</a>
+  </div>
+</div>
+
+<form method="get" class="toolbar visit-filters" role="search" aria-label="Filter visits">
+  {{ filter_form.q }}
+  {{ filter_form.doctor }}
+  <label class="filter-date" for="{{ filter_form.date_from.id_for_label }}"><span>From</span>{{ filter_form.date_from }}</label>
+  <label class="filter-date" for="{{ filter_form.date_to.id_for_label }}"><span>To</span>{{ filter_form.date_to }}</label>
+  <button type="submit" class="btn btn-secondary">{% include "includes/icon.html" with name="search" %}Filter</button>
+  {% if filter_form.is_filtered %}<a class="btn btn-ghost" href="{% url 'clinical:visit_list' %}">Clear</a>{% endif %}
+</form>
+
+<div class="card">
+  {% if visits %}
+    <div class="table-wrap">
+      <table class="table table-stack">
+        <thead>
+          <tr><th>Date</th><th>Patient</th><th>Doctor</th><th>Complaint</th><th>Diagnosis</th><th>Follow-up</th></tr>
+        </thead>
+        <tbody>
+          {% for visit in visits %}
+            <tr>
+              <td data-label="Date" class="nowrap"><a class="row-link" href="{{ visit.get_absolute_url }}">{{ visit.visit_date|date:"j M Y" }}</a> <span class="subtle small">{{ visit.visit_date|time:"g:i a" }}</span></td>
+              <td data-label="Patient"><a href="{{ visit.get_absolute_url }}">{{ visit.patient.full_name }}</a> <span class="subtle small">{{ visit.patient.mrn }}</span></td>
+              <td data-label="Doctor">{{ visit.doctor.full_name }}</td>
+              <td data-label="Complaint">{{ visit.chief_complaint|truncatechars:60 }}</td>
+              <td data-label="Diagnosis">{{ visit.diagnosis|truncatechars:60|default:"—" }}</td>
+              <td data-label="Follow-up" class="nowrap">{{ visit.follow_up_date|date:"j M Y"|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% include "includes/pagination.html" %}
+  {% elif filter_form.is_filtered %}
+    {% include "includes/empty_state.html" with icon="search" title="No visits match these filters" text="Try a different name, doctor or dates." %}
+  {% else %}
+    {% url 'patients:list' as patients_url %}
+    {% include "includes/empty_state.html" with icon="clipboard" title="No visits yet" text="Open a patient's page and start a visit to record a consultation." action_url=patients_url action_label="Go to patients" %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Edit reminder{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/reminders.css' %}">{% endblock %}
+{% block content_class %}content-narrow{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'reminders:list' %}">Reminders</a><span aria-hidden="true">/</span><span>Edit</span></div>
+    <h1>Edit reminder</h1>
+    <p class="subtitle">{{ reminder.get_kind_display }} · not sent yet</p>
+  </div>
+</div>
+
+{% include "includes/patient_banner.html" with patient=patient %}
+
+{% if not has_whatsapp %}
+  <div class="alert alert-warning">
+    {% include "includes/icon.html" with name="alert" %}
+    <div>
+      {{ patient.full_name }} has no valid WhatsApp number, so this message can't be sent with one tap.
+      <a href="{% url 'patients:update' patient.pk %}">Fix the number</a>{% if patient.phone %} or call {{ patient.phone }}{% endif %}.
+    </div>
+  </div>
+{% endif %}
+
+<form method="post" class="card">
+  {% csrf_token %}
+  {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+  <div class="card-body form">
+    {% include "includes/form_fields.html" with form=form grid=True %}
+    <div>
+      <div class="form-section-title">How the patient will see it</div>
+      <div class="wa-chat"><div class="wa-bubble" id="message-preview">{{ form.message.value|default_if_none:"" }}</div></div>
+    </div>
+  </div>
+  <div class="card-footer form-actions">
+    <button type="submit" name="action" value="save" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save</button>
+    {% if has_whatsapp %}
+      <button type="submit" name="action" value="send" class="btn btn-whatsapp" data-wa-send data-after-url="{% url 'reminders:list' %}?tab=sent">
+        {% include "includes/icon.html" with name="whatsapp" %}Save and send on WhatsApp
+      </button>
+    {% endif %}
+    <a class="btn btn-ghost" href="{% if next_url %}{{ next_url }}{% else %}{% url 'reminders:list' %}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/reminders.js' %}" defer></script>{% endblock %}
