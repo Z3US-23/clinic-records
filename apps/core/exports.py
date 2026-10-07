@@ -194,6 +194,7 @@ VISIT_COLUMNS = [
     ("bp_diastolic", "mmHg"),
     ("pulse_bpm", "beats per minute"),
     ("temperature_c", "degrees Celsius"),
+    ("temperature_f", "degrees Fahrenheit (same reading)"),
     ("weight_kg", ""),
     ("height_cm", ""),
     ("spo2_percent", "oxygen saturation"),
@@ -210,7 +211,7 @@ def _visit_rows(clinic, person):
     for v in visits.iterator(chunk_size=CHUNK_SIZE):
         yield [
             v.pk, v.visit_date, v.patient_id, v.patient.mrn, v.patient.full_name, person(v.doctor), v.appointment_id,
-            v.chief_complaint, v.history, v.examination, v.bp_systolic, v.bp_diastolic, v.pulse, v.temperature_c,
+            v.chief_complaint, v.history, v.examination, v.bp_systolic, v.bp_diastolic, v.pulse, v.temperature_c, v.temperature_f,
             v.weight_kg, v.height_cm, v.spo2, v.blood_sugar, v.diagnosis, v.plan, v.follow_up_date, v.updated_at,
         ]
 

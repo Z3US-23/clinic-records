@@ -160,7 +160,7 @@ def vitals_summary(visit):
         readings.append(f"Pulse {visit.pulse}")
     if visit.temperature_c is not None:
         # Stored in °C; most doctors here read °F, so show both (as the visit pages do).
-        readings.append(f"Temp {visit.temperature_c} °C ({visit.temperature_f:.1f} °F)")
+        readings.append(f"Temp {visit.temperature_c:.1f} °C ({visit.temperature_f:.1f} °F)")
     if visit.spo2:
         readings.append(f"SpO₂ {visit.spo2}%")
     if visit.weight_kg is not None:

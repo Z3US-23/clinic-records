@@ -34,7 +34,7 @@ class Visit(models.Model):
         "pulse (bpm)", null=True, blank=True, validators=[MinValueValidator(20), MaxValueValidator(250)]
     )
     temperature_c = models.DecimalField(
-        "temperature (°C)", max_digits=4, decimal_places=1, null=True, blank=True,
+        "temperature (°C)", max_digits=5, decimal_places=2, null=True, blank=True,
         validators=[MinValueValidator(30), MaxValueValidator(45)],
     )
     weight_kg = models.DecimalField(

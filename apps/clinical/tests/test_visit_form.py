@@ -123,7 +123,7 @@ class VisitCreateTests(ClinicalTestCase):
         self.assertEqual(visit.doctor, self.doctor)
         self.assertEqual(visit.created_by, self.doctor)
         self.assertEqual(visit.blood_pressure, "130/85")
-        self.assertEqual(str(visit.temperature_c), "38.2")
+        self.assertEqual(visit.temperature_c, Decimal("38.2"))
         self.assertEqual(visit.diagnosis, "Acute bronchitis")
 
         items = list(visit.prescription_items.all())
@@ -167,12 +167,14 @@ class VisitCreateTests(ClinicalTestCase):
         self.assertFalse(Visit.objects.exists())
 
     def test_temperature_in_fahrenheit_is_saved_in_celsius(self, refresh):
-        for typed, saved in [("101", "38.3"), ("98.6", "37.0"), ("104", "40.0"), ("100.4", "38.0")]:
+        for typed, saved in [("101", "38.33"), ("98.6", "37.00"), ("104", "40.00"), ("100.4", "38.00"), ("102.5", "39.17")]:
             with self.subTest(typed=typed):
                 Visit.objects.all().delete()
                 response = self.client.post(create_url(self.patient), visit_post_data(temperature_c=typed))
                 self.assertEqual(response.status_code, 302)
                 self.assertEqual(Visit.objects.get().temperature_c, Decimal(saved))
+                # The doctor sees back exactly what they typed in °F.
+                self.assertEqual(Visit.objects.get().temperature_f, float(typed))
 
     def test_temperature_in_celsius_is_kept(self, refresh):
         for typed in ("38.3", "36.6", "30", "45"):

@@ -91,7 +91,9 @@ def vitals_for_display(visit):
         value = getattr(visit, attribute)
         if value is None or value == "":
             continue
-        if not isinstance(value, str):
+        if attribute == "temperature_c":
+            value = floatformat(round(value, 1), -1)  # stored to 0.01 °C: 38.33 -> "38.3", 37.00 -> "37"
+        elif not isinstance(value, str):
             value = floatformat(value, -1)  # 37.0 -> "37", 37.5 -> "37.5"
         text = f"{value}{unit}" if unit == "%" else f"{value} {unit}".strip()
         if attribute == "temperature_c":

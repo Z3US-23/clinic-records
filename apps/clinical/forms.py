@@ -148,7 +148,7 @@ class VisitForm(forms.ModelForm):
         return day
 
     def clean_temperature_c(self):
-        """Accept °F or °C and return °C (the unit the visit stores), rounded like the model (0.1)."""
+        """Accept °F or °C and return °C (the unit the visit stores), to 0.01 so °F round-trips exactly."""
         value = self.cleaned_data.get("temperature_c")
         if value is None:
             return None
@@ -158,7 +158,7 @@ class VisitForm(forms.ModelForm):
             celsius = (value - 32) * 5 / 9
         else:
             raise forms.ValidationError("Enter the temperature in °F (e.g. 101.2) or °C (e.g. 38.4).")
-        return celsius.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        return celsius.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def clean(self):
         cleaned = super().clean()
