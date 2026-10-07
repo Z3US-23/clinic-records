@@ -3,6 +3,9 @@
 Patient records, medical history, appointments and WhatsApp reminders for independent
 doctors and small clinics in Pakistan and India.
 
+**[Try the live demo](https://ahmad1305.pythonanywhere.com)**: sign in with one click as a doctor,
+receptionist or clinic owner. All patients are made up.
+
 Doctors in small clinics often can't see a patient's history during a consultation: records
 sit in paper files, nobody tracks follow-ups, and patients miss check-ups. Clinic Records keeps
 every visit, prescription and lab result in one place, and each morning it prepares the
@@ -99,12 +102,20 @@ The public demo runs the made-up Demo Family Clinic with `DEMO_MODE` on. Visitor
 - can try everything except the few changes that would spoil the demo for the next visitor, such as
   passwords, staff, clinic settings, patient import and file uploads (`apps/core/demo.py`).
 
-Every start creates a fresh demo clinic dated around today, and the free server restarts after
-15 idle minutes, so visitors' changes are wiped regularly. The first visit after a quiet spell
-takes about a minute while the server wakes up.
+The live demo runs on [PythonAnywhere](https://www.pythonanywhere.com)'s free plan. To host your own copy:
 
-To deploy your own copy on [Render](https://render.com)'s free tier: **New → Blueprint**, choose
-this repository, then **Deploy Blueprint**. `render.yaml` holds the whole setup.
+1. Create a free account, open a **Bash console** and run
+   `git clone https://github.com/Z3US-23/clinic-records.git`.
+2. On the **Web** tab, add a web app with **Manual configuration** and **Python 3.12**.
+3. In the console run `bash ~/clinic-records/scripts/pythonanywhere_setup.sh`. It installs everything,
+   writes `.env` and the WSGI file, and creates the demo clinic.
+4. On the **Web** tab set the virtualenv to `/home/<username>/clinic-records/.venv`, turn on
+   **Force HTTPS** and click **Reload**.
+5. On the **Tasks** tab add a daily task `bash ~/clinic-records/scripts/reset_demo.sh`, so the demo
+   starts fresh every day with appointments dated today.
+
+`render.yaml` sets up the same demo on [Render](https://render.com) (**New → Blueprint**), but Render
+asks for a payment card.
 
 **Never turn `DEMO_MODE` on for a site with real patients**: one-click sign-in lets anyone in.
 
