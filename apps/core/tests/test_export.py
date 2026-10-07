@@ -10,9 +10,13 @@ from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.accounts.models import Membership
 from apps.clinical.models import LabResult, PrescriptionItem
-from apps.core.exports import safe_cell
+from apps.core.exports import safe_cell, without_confirm_links
 from apps.core.models import AuditLog
+from apps.core.testing import make_user
+from apps.reminders.models import Reminder
+from apps.reminders.services import MessageBuilder
 
 from .base import KARACHI, CoreTestCase
 
@@ -103,6 +107,16 @@ class ExportDownloadTests(CoreTestCase):
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"), f"{name} should start with a UTF-8 BOM for Excel")
         return list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
 
+    def test_waiting_invitation_is_not_exported(self):
+        """Someone invited from another clinic hasn't joined: their name and account are not this clinic's."""
+        invitee = make_user(self.other_clinic, Membership.Role.DOCTOR, email="invited@example.test", full_name="SECRET-NAME")
+        Membership(user=invitee, clinic=self.clinic, role=Membership.Role.DOCTOR).start_invitation()
+        _, archive = self.download()
+        staff = self.read_csv(archive, "staff.csv")
+        self.assertNotIn("invited@example.test", {s["email"] for s in staff})
+        self.assertNotIn("SECRET-NAME", archive.read("staff.csv").decode("utf-8-sig"))
+        self.assertEqual(self.client.get(EXPORT).context["counts"]["staff"], 3)
+
     def test_zip_download(self):
         response, archive = self.download()
         today = timezone.localtime(timezone.now(), KARACHI)
@@ -149,12 +163,38 @@ class ExportDownloadTests(CoreTestCase):
             self.assertNotIn(marker, everything)
 
     def test_no_secrets(self):
+        # A real appointment reminder: its message carries the patient's confirmation link.
+        reminder = Reminder.objects.create(
+            clinic=self.clinic, patient=self.patient, appointment=self.appointment, kind=Reminder.Kind.APPOINTMENT,
+            due_date=self.today, message=MessageBuilder(self.clinic).appointment_message(self.appointment),
+        )
+        # Staff pasted the link into a custom message too, after the site moved to a new address.
+        pasted = f"Hello again, tap https://old-address.example/c/{self.appointment.confirm_token}/ to answer."
+        self.make_reminder(self.patient, message=pasted)
+        self.assertIn(self.appointment.confirm_token, reminder.message)  # the export has something to hide
+
         _, archive = self.download()
         everything = b"".join(archive.read(name) for name in archive.namelist()).decode("utf-8-sig")
         self.assertNotIn(self.appointment.confirm_token, everything)
         self.assertNotIn(self.owner.password, everything)
         self.assertNotIn("md5$", everything)
         self.assertNotIn("pbkdf2", everything)
+
+        # The rest of each message is still there.
+        messages = {row["reminder_id"]: row["message"] for row in self.read_csv(archive, "reminders.csv")}
+        self.assertIn("/c/(link removed)/", messages[str(reminder.pk)])
+        self.assertIn(f"Hello {self.patient.first_name}, this is a reminder", messages[str(reminder.pk)])
+        self.assertIn("Tap to confirm or ask for another time:", messages[str(reminder.pk)])
+        self.assertTrue(any(m.startswith("Hello again, tap https://old-address.example/c/(link removed)/") for m in messages.values()))
+
+    def test_confirm_links_are_cut_out_of_any_text(self):
+        token = "Ab3_-" * 6 + "Zz"  # 32 characters, like secrets.token_urlsafe(24)
+        self.assertEqual(
+            without_confirm_links(f"Tap http://127.0.0.1:8000/c/{token}/ now"), "Tap http://127.0.0.1:8000/c/(link removed)/ now"
+        )
+        self.assertEqual(without_confirm_links(f"code {token} here", token), "code (removed) here")
+        self.assertEqual(without_confirm_links("No link, see /c/short/"), "No link, see /c/short/")
+        self.assertEqual(without_confirm_links(""), "")
 
     def test_formula_injection_is_escaped(self):
         self.make_patient(

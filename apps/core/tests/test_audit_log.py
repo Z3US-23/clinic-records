@@ -2,7 +2,7 @@ from django.contrib.admin.sites import site
 from django.test import RequestFactory
 from django.urls import reverse
 
-from apps.accounts.models import User
+from apps.accounts.models import Membership, User
 from apps.core.admin import AuditLogAdmin
 from apps.core.models import AuditLog
 
@@ -102,6 +102,13 @@ class AuditLogContentTests(CoreTestCase):
         choices = self.client.get(AUDIT_LOG).context["form"].fields["user"].queryset
         self.assertEqual(set(choices), {self.owner, self.doctor, self.receptionist})
         self.assertNotIn(self.other_owner, choices)
+
+    def test_waiting_invitation_is_not_a_choice(self):
+        """Until they accept, the clinic only knows the email it typed, not the account's name."""
+        Membership(user=self.other_owner, clinic=self.clinic, role=Membership.Role.DOCTOR).start_invitation()
+        response = self.client.get(AUDIT_LOG)
+        self.assertNotIn(self.other_owner, response.context["form"].fields["user"].queryset)
+        self.assertNotContains(response, self.other_owner.full_name)
 
     def test_paginated_by_50(self):
         AuditLog.objects.bulk_create(

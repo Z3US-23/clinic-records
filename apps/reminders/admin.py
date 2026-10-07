@@ -6,7 +6,7 @@ from .models import MessageTemplate, Reminder
 @admin.register(Reminder)
 class ReminderAdmin(admin.ModelAdmin):
     list_display = ("patient", "kind", "status", "due_date", "clinic", "sent_at", "sent_by")
-    list_filter = ("status", "kind", "channel", "clinic")
+    list_filter = ("status", "skip_reason", "kind", "channel", "clinic")
     search_fields = ("patient__full_name", "patient__mrn", "clinic__name")
     date_hierarchy = "due_date"
     list_select_related = ("patient", "clinic", "sent_by")

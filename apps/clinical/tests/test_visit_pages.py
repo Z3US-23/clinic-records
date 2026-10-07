@@ -9,6 +9,7 @@ from django.utils import dateformat, timezone
 from apps.accounts.models import Clinic, Membership
 from apps.clinical.models import LabResult, Visit
 from apps.core.audit import Action
+from apps.core.models import AuditLog
 from apps.core.testing import make_patient
 
 from .base import ClinicalTestCase
@@ -48,7 +49,7 @@ class VisitDetailTests(ClinicalTestCase):
                 response = self.client.get(detail_url(self.visit))
                 self.assertEqual(response.status_code, 200)
                 self.assertTemplateUsed(response, "clinical/visit_detail.html")
-                self.assertContains(response, "Allergies: Penicillin")
+                self.assert_allergy_banner(response, "Allergies: Penicillin")
                 self.assertContains(response, "Seen by Dr. Bilal Hussain")
                 self.assertContains(response, "Headache for a week")
                 self.assertContains(response, "Worse in the mornings\nNo vomiting")  # kept as typed (pre-line)
@@ -222,6 +223,52 @@ class VisitListTests(ClinicalTestCase):
         self.assertEqual(self.client.get(LIST_URL).status_code, 403)
 
 
+class VisitListAuditTests(ClinicalTestCase):
+    """The visit list shows complaints and diagnoses: each page view is audited once, with the MR numbers."""
+
+    def setUp(self):
+        self.usman = make_patient(self.clinic, full_name="Usman Tariq")
+        now = timezone.now()
+        self.make_visit(self.patient, visit_date=now - timedelta(days=3), diagnosis="DIAGSECRET one")
+        self.make_visit(self.usman, visit_date=now - timedelta(days=2), diagnosis="DIAGSECRET two")
+        self.make_visit(self.patient, visit_date=now - timedelta(days=1), diagnosis="DIAGSECRET three")
+        self.make_visit(self.other_patient, doctor=self.other_owner)
+        self.login(self.doctor)
+
+    def views(self):
+        return AuditLog.objects.filter(action=Action.VIEW)
+
+    def test_one_row_per_page_with_the_patients_on_it(self):
+        response = self.client.get(LIST_URL)
+        self.assertContains(response, "DIAGSECRET")
+        audit = self.views().get()
+        # Newest first, each patient once; nothing from the other clinic.
+        self.assertEqual(audit.summary, f"Viewed visit list: {self.patient.mrn}, {self.usman.mrn}")
+        self.assertEqual((audit.user, audit.clinic, audit.object_type), (self.doctor, self.clinic, ""))
+
+    def test_search_text_and_diagnoses_stay_out_of_the_log(self):
+        self.client.get(LIST_URL, {"q": "Usman"})
+        audit = self.views().get()
+        self.assertEqual(audit.summary, f"Viewed visit list: {self.usman.mrn}")
+        for summary in AuditLog.objects.values_list("summary", flat=True):
+            self.assertNotIn("DIAGSECRET", summary)
+            self.assertNotIn("Usman", summary)
+
+    def test_an_empty_page_is_not_logged(self):
+        self.client.get(LIST_URL, {"q": "nobody by this name"})
+        self.assertFalse(self.views().exists())
+
+    def test_a_long_page_keeps_the_summary_inside_the_limit(self):
+        patients = [make_patient(self.clinic, full_name=f"Patient {n}", mrn=f"OLD-FILE-{n:06d}") for n in range(25)]
+        for patient in patients:
+            self.make_visit(patient)
+        self.client.get(LIST_URL)
+        summary = self.views().get().summary
+        self.assertLessEqual(len(summary), 255)
+        self.assertTrue(summary.startswith("Viewed visit list: OLD-FILE-"))
+        self.assertRegex(summary, r"\(\+\d+ more\)$")  # no MR number cut in half
+
+
 class PrescriptionPrintTests(ClinicalTestCase):
     def setUp(self):
         Clinic.objects.filter(pk=self.clinic.pk).update(
@@ -280,6 +327,38 @@ class PrescriptionPrintTests(ClinicalTestCase):
         self.assertContains(response, "js/clinical.js")
         self.assertContains(response, "data-print")
         self.assertContains(response, detail_url(self.visit))  # "Back to visit"
+
+    def test_a5_with_the_letterhead_by_default(self):
+        self.login(self.doctor)
+        response = self.client.get(print_url(self.visit))
+        self.assertContains(response, '<body class="rx-body rx-a5">')
+        self.assertContains(response, 'class="rx-letterhead"')
+        self.assertNotContains(response, "rx-preprinted")
+        self.assertContains(response, '<option value="a5" selected>A5 (half sheet)</option>', html=True)
+        self.assertContains(response, '<option value="0" selected>Print our letterhead</option>', html=True)
+        # The patient is named at the bottom too, so a loose second page can't be mixed up.
+        self.assertContains(response, f"Ayesha Khan · {self.patient.mrn} · ")
+
+    def test_a4_paper(self):
+        self.login(self.doctor)
+        response = self.client.get(print_url(self.visit), {"paper": "a4"})
+        self.assertContains(response, '<body class="rx-body rx-a4">')
+        self.assertContains(response, '<option value="a4" selected>A4 (full sheet)</option>', html=True)
+
+    def test_pre_printed_pad_leaves_the_letterhead_off_the_paper(self):
+        self.login(self.doctor)
+        response = self.client.get(print_url(self.visit), {"pad": "40"})
+        self.assertContains(response, '<body class="rx-body rx-a5 rx-preprinted rx-top-40">')
+        self.assertContains(response, "Al-Noor Family Clinic")  # still on screen (faded), hidden by the print CSS
+        self.assertContains(response, "your pad already has it")
+        self.assertContains(response, '<option value="40" selected>Pre-printed pad: leave 4 cm blank</option>', html=True)
+
+    def test_unknown_print_options_are_ignored(self):
+        self.login(self.doctor)
+        response = self.client.get(print_url(self.visit), {"paper": "<script>", "pad": "999"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<body class="rx-body rx-a5">')
+        self.assertNotContains(response, "<script>")
 
     def test_owner_printing_shows_the_visit_doctor(self):
         self.login(self.owner)

@@ -26,6 +26,8 @@ class ClinicSettingsTests(AccountsTestCase):
             "default_appointment_minutes": 20,
             "prescription_header": "Mon–Sat, 5 pm to 10 pm",
             "prescription_footer": "Please bring this prescription on your next visit.",
+            "prescription_paper": "a5",
+            "prescription_pad_space": 0,
         }
         data.update(overrides)
         return data
@@ -62,16 +64,33 @@ class ClinicSettingsTests(AccountsTestCase):
         self.assertEqual(entry.clinic, self.clinic)
         self.assertIn("appointment_reminder_days", entry.summary)
 
+    def test_print_defaults_are_saved(self):
+        self.login(self.owner)
+        response = self.client.post(self.url, self.form_data(prescription_paper="a4", prescription_pad_space=40))
+        self.assertRedirects(response, self.url)
+        self.clinic.refresh_from_db()
+        self.assertEqual((self.clinic.prescription_paper, self.clinic.prescription_pad_space), ("a4", 40))
+
+    def test_print_defaults_only_accept_offered_choices(self):
+        self.login(self.owner)
+        for field, value in (("prescription_paper", "letter"), ("prescription_pad_space", 35)):
+            with self.subTest(field=field):
+                response = self.client.post(self.url, self.form_data(**{field: value}))
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(field, response.context["form"].errors)
+
     def test_number_limits(self):
         self.login(self.owner)
-        cases = {
-            "appointment_reminder_days": 15,
-            "followup_reminder_days": -1,
-            "overdue_grace_days": 61,
-            "default_appointment_minutes": 4,
-        }
-        for field, value in cases.items():
-            with self.subTest(field=field):
+        cases = [
+            ("appointment_reminder_days", 15),
+            ("followup_reminder_days", -1),
+            ("overdue_grace_days", 61),
+            # 0 would mean "on the due date itself", before the patient has even had the day to come.
+            ("overdue_grace_days", 0),
+            ("default_appointment_minutes", 4),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
                 response = self.client.post(self.url, self.form_data(**{field: value}))
                 self.assertEqual(response.status_code, 200)
                 self.assertIn(field, response.context["form"].errors)
@@ -141,6 +160,8 @@ class AdminTests(AccountsTestCase):
                 "followup_reminder_days": 2,
                 "overdue_grace_days": 3,
                 "default_appointment_minutes": 15,
+                "prescription_paper": "a5",  # the admin page starts with these defaults selected
+                "prescription_pad_space": 0,
                 "memberships-TOTAL_FORMS": 0,
                 "memberships-INITIAL_FORMS": 0,
             },

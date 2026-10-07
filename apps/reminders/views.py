@@ -5,7 +5,6 @@ Every query is limited to `request.clinic`; another clinic's reminder is a 404.
 """
 
 import logging
-import re
 from datetime import timedelta
 
 from django.contrib import messages
@@ -61,7 +60,9 @@ def _safe_next(request, default):
 
 
 def _get_reminder(request, pk):
-    return get_object_or_404(Reminder.objects.select_related("patient"), pk=pk, clinic=request.clinic)
+    return get_object_or_404(
+        Reminder.objects.select_related("patient", "appointment"), pk=pk, clinic=request.clinic
+    )
 
 
 def _no_number_message(patient):
@@ -71,16 +72,32 @@ def _no_number_message(patient):
     )
 
 
-def _send_problem(reminder):
-    """Why this reminder can't be opened in WhatsApp, or "" when it can."""
+def _send_blocker(reminder):
+    """Why this reminder must not be sent at all (fixing the phone number would not help), or ""."""
     patient = reminder.patient
     if reminder.status == Reminder.Status.SKIPPED:
         return "This reminder was skipped, so it can't be sent. Write a new message instead."
     if patient.is_archived:
         return f"{patient.full_name}'s record is archived, so reminders can't be sent."
-    if get_channel(reminder).url_for(reminder) is None:
-        return _no_number_message(patient)
+    # Custom messages are still allowed: staff are warned when they write one.
+    if reminder.kind != ReminderKind.CUSTOM and not patient.reminders_opt_in:
+        return (
+            f"{patient.full_name} asked not to get WhatsApp reminders, so this reminder can't be sent. "
+            "Write a new message if they are expecting one."
+        )
+    if reminder.kind == ReminderKind.APPOINTMENT and not (
+        reminder.appointment is not None and services.appointment_is_remindable(reminder.appointment)
+    ):
+        return "This appointment has already happened or was cancelled or changed, so its reminder can't be sent."
     return ""
+
+
+def _send_problem(reminder):
+    """Why this reminder can't be opened in WhatsApp, or "" when it can."""
+    problem = _send_blocker(reminder)
+    if not problem and get_channel(reminder).url_for(reminder) is None:
+        problem = _no_number_message(reminder.patient)
+    return problem
 
 
 def _send_on_whatsapp(request, reminder, back_url):
@@ -89,6 +106,8 @@ def _send_on_whatsapp(request, reminder, back_url):
     The first send records who sent it and when. "Send again" on a sent reminder
     re-opens WhatsApp but keeps the original sent time (it is still audited).
     When the reminder can't be sent, explains why and goes back to `back_url`.
+    Every way of sending (the list, "Send again", "Save and send") comes through
+    here, so the rules in _send_problem() are enforced in one place.
     """
     problem = _send_problem(reminder)
     if problem:
@@ -118,7 +137,8 @@ def _decorate(reminder, today):
     patient = reminder.patient
     reminder.days_late = (today - reminder.due_date).days if reminder.due_date < today else 0
     reminder.has_whatsapp = bool(patient.whatsapp_number)
-    reminder.call_number = re.sub(r"[^\d+]", "", patient.phone or "")
+    # The same rules the send view enforces, so the page never offers a button that would be refused.
+    reminder.send_blocker = _send_blocker(reminder)
     return reminder
 
 
@@ -168,8 +188,9 @@ class ReminderListView(ClinicRequiredMixin, View):
         label, condition, ordering = tabs[current]
         queryset = (
             clinic_reminders.filter(condition)
-            .select_related("patient", "sent_by")
-            .annotate(appointment_at=F("appointment__scheduled_at"), follow_up_on=F("visit__follow_up_date"))
+            .select_related("patient", "appointment", "sent_by")
+            # Only the follow-up date from the visit: the visit's clinical notes are never loaded here.
+            .annotate(follow_up_on=F("visit__follow_up_date"))
             .order_by(*ordering)
         )
         page_obj = Paginator(queryset, self.paginate_by).get_page(request.GET.get("page"))
@@ -213,8 +234,9 @@ class SkipReminderView(ClinicRequiredMixin, View):
         reminder = _get_reminder(request, pk)
         back = _safe_next(request, _list_url())
 
+        # Skipped by staff: unlike a reminder the system skipped, it never comes back by itself.
         skipped = Reminder.objects.filter(pk=reminder.pk, status=Reminder.Status.PENDING).update(
-            status=Reminder.Status.SKIPPED
+            status=Reminder.Status.SKIPPED, skip_reason=Reminder.SkipReason.STAFF
         )
         if skipped:
             log_action(
@@ -254,6 +276,7 @@ class ReminderUpdateView(ClinicRequiredMixin, View):
                 "patient": reminder.patient,
                 "form": form,
                 "has_whatsapp": bool(reminder.patient.whatsapp_number),
+                "send_blocker": _send_blocker(reminder),
                 "next_url": _safe_next(request, ""),
             },
         )
@@ -313,9 +336,11 @@ class CustomReminderCreateView(ClinicRequiredMixin, View):
         patient_id = request.GET.get("patient", "").strip()
         if not patient_id:
             return None
-        if not patient_id.isdigit():
+        # isdecimal(), not isdigit(): "²" and "①" count as digits but int() can't read them.
+        # The length cap keeps the number inside the database's integer range.
+        if not (patient_id.isdecimal() and len(patient_id) <= 18):
             raise Http404("No such patient.")
-        return get_object_or_404(Patient, pk=patient_id, clinic=request.clinic, is_archived=False)
+        return get_object_or_404(Patient, pk=int(patient_id), clinic=request.clinic, is_archived=False)
 
     def search(self, request):
         form = PatientSearchForm(request.GET or None)
@@ -393,7 +418,7 @@ def _kind_help(clinic, kind):
         return f"Prepared {days(clinic.followup_reminder_days)} before the follow-up date the doctor set."
     if kind == ReminderKind.OVERDUE:
         return (
-            f"Prepared when a follow-up is {days(clinic.overdue_grace_days)} late "
+            f"Prepared when a follow-up is {days(services.overdue_grace_days(clinic))} late "
             "and the patient has not come back or booked."
         )
     return "The starting text when you write a message to one patient."

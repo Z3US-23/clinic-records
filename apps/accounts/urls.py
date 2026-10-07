@@ -12,10 +12,12 @@ urlpatterns = [
     path("signup/", views.SignupView.as_view(), name="signup"),
     path("no-clinic/", views.NoClinicView.as_view(), name="no_clinic"),
     path("switch-clinic/<int:clinic_id>/", views.switch_clinic, name="switch_clinic"),
+    path("join/<str:token>/", views.JoinClinicView.as_view(), name="join"),
     path("profile/", views.ProfileView.as_view(), name="profile"),
     path("staff/", views.StaffListView.as_view(), name="staff_list"),
     path("staff/add/", views.StaffAddView.as_view(), name="staff_add"),
     path("staff/<int:pk>/edit/", views.StaffEditView.as_view(), name="staff_edit"),
     path("staff/<int:pk>/password/", views.StaffSetPasswordView.as_view(), name="staff_set_password"),
+    path("staff/<int:pk>/invite/", views.staff_invite, name="staff_invite"),
     path("settings/", views.ClinicSettingsView.as_view(), name="clinic_settings"),
 ]

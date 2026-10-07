@@ -1,3 +1,4 @@
+{% load clinical_tags %}
 {% comment %}
 Clinical summary card on the patient profile. Included for clinicians only (the view builds
 `summary` only for them). Expects: patient, summary (see apps.patients.services.clinical_summary).
@@ -34,14 +35,20 @@ Clinical summary card on the patient profile. Included for clinicians only (the 
       </div>
 
       <div class="summary-block">
-        <h3>Current medicines</h3>
+        {# The latest prescription, not "current medicines": a short course may be long finished. #}
+        <h3>Last prescription</h3>
         {% if summary.medicines %}
           <ul class="medicine-list">
             {% for item in summary.medicines %}
-              <li><strong>{{ item.medicine }}</strong>{% if item.dose or item.frequency or item.duration %} <span class="muted">— {{ item.dose }}{% if item.dose and item.frequency %}, {% endif %}{{ item.frequency }}{% if item.duration %} for {{ item.duration }}{% endif %}</span>{% endif %}</li>
+              {% with details=item|rx_details %}
+                <li><strong>{{ item.medicine }}</strong>{% if details %} <span class="muted">{{ details }}</span>{% endif %}</li>
+              {% endwith %}
             {% endfor %}
           </ul>
           <p class="subtle small mb-0">From visit on <a href="{% url 'clinical:visit_detail' summary.medicines_visit.pk %}">{{ summary.medicines_visit.visit_date|date:"j M Y" }}</a></p>
+          {% if summary.medicines_old %}
+            <p class="subtle small mb-0 mt-1">Prescribed {{ summary.medicines_days_ago }} days ago. Check whether the patient still takes these.</p>
+          {% endif %}
         {% else %}
           <p class="subtle mb-0">No medicines prescribed yet</p>
         {% endif %}
@@ -56,12 +63,14 @@ Clinical summary card on the patient profile. Included for clinicians only (the 
                 <span class="badge badge-danger">Overdue</span> Was due {{ follow.due|date:"j M Y" }}
               {% elif follow.state == "booked" %}
                 <span class="badge badge-success">Booked</span> {{ follow.appointment.scheduled_at|date:"j M Y" }}, {{ follow.appointment.scheduled_at|time:"g:i a" }}
+              {% elif follow.state == "came_back" %}
+                <span class="badge badge-success">Came back</span> {{ follow.appointment.scheduled_at|date:"j M Y" }}
               {% else %}
                 <span class="badge badge-info">Due</span> {{ follow.due|date:"j M Y" }}
               {% endif %}
             </p>
             <p class="subtle small mb-0">
-              Set at the visit on {{ summary.latest_visit.visit_date|date:"j M Y" }}{% if follow.state == "booked" %} (follow-up date {{ follow.due|date:"j M Y" }}){% endif %}
+              Set at the visit on {{ summary.latest_visit.visit_date|date:"j M Y" }}{% if follow.state == "booked" or follow.state == "came_back" %} (follow-up date {{ follow.due|date:"j M Y" }}){% endif %}
             </p>
             {% if follow.state == "overdue" and not patient.is_archived %}
               <a class="btn btn-secondary btn-sm mt-1" href="{% url 'appointments:create' %}?patient={{ patient.pk }}">{% include "includes/icon.html" with name="calendar-plus" size="sm" %}Book follow-up</a>

@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.appointments.models import Appointment
+from apps.reminders import services as reminder_services
 from apps.reminders.models import Reminder
 
 from .base import AppointmentTestCase
@@ -128,6 +129,62 @@ class DayViewTests(AppointmentTestCase):
         rows = {a.pk: a for a in response.context["schedule"]}
         self.assertTrue(rows[not_yet.pk].reminder_expected)
         self.assertFalse(rows[cancelled.pk].reminder_expected)  # shown as "—", not "Not yet"
+        self.assertNotContains(response, "Reminders off")
+
+    def test_reminders_off_for_patients_who_opted_out_or_were_archived(self):
+        self.make_appointment(self.patient, when=self.at(self.tomorrow, 10))
+        opted_out = self.make_patient(full_name="Opted Out", reminders_opt_in=False)
+        self.make_appointment(opted_out, when=self.at(self.tomorrow, 11))
+        archived = self.make_patient(full_name="Archived Later")
+        self.make_appointment(archived, when=self.at(self.tomorrow, 12))
+        archived.is_archived = True  # archived after the appointment was booked
+        archived.save()
+        # Cancelled: no reminder is expected anyway, so it stays "—".
+        self.make_appointment(opted_out, when=self.at(self.tomorrow, 13), status=Status.CANCELLED)
+
+        self.login(self.receptionist)
+        response = self.client.get(self.day_url(self.tomorrow))
+        self.assertContains(response, "Not yet", count=1)  # only the patient who wants reminders
+        self.assertContains(response, "Reminders off", count=2)
+        self.assertContains(response, 'title="Patient did not agree to WhatsApp reminders"')
+        self.assertContains(response, 'title="Patient is archived"')
+        rows = {a.patient.full_name: a for a in response.context["schedule"] if a.status != Status.CANCELLED}
+        self.assertFalse(rows["Opted Out"].reminder_expected)
+        self.assertTrue(rows["Opted Out"].reminders_off)
+
+    def test_an_earlier_reminder_stays_visible_after_opting_out(self):
+        appointment = self.make_appointment(self.patient, when=self.at(self.tomorrow, 10))
+        Reminder.objects.create(
+            clinic=self.clinic, patient=self.patient, appointment=appointment, kind=Reminder.Kind.APPOINTMENT,
+            due_date=self.today, message="Reminder", status=Reminder.Status.SENT,
+        )
+        self.patient.reminders_opt_in = False
+        self.patient.save()
+
+        self.login(self.receptionist)
+        response = self.client.get(self.day_url(self.tomorrow))
+        self.assertContains(response, "Sent")
+        self.assertNotContains(response, "Reminders off")
+        self.assertNotContains(response, "Not yet")
+
+    def test_reminder_column_agrees_with_the_reminder_service(self):
+        """The row says "Reminders off" exactly when the service prepares none (a missing number does not count)."""
+        patients = [
+            self.patient,
+            self.make_patient(full_name="Opted Out", reminders_opt_in=False),
+            self.make_patient(full_name="Archived", is_archived=True),
+            self.make_patient(full_name="No Mobile", phone=""),
+        ]
+        for hour, patient in enumerate(patients, start=10):
+            self.make_appointment(patient, when=self.at(self.tomorrow, hour))
+        reminder_services.generate_reminders(self.clinic)
+
+        self.login(self.receptionist)
+        response = self.client.get(self.day_url(self.tomorrow))
+        for row in response.context["schedule"]:
+            with self.subTest(patient=row.patient.full_name):
+                self.assertEqual(row.reminders_off, row.reminder is None)
+        self.assertContains(response, "Reminders off", count=2)
 
     def test_quick_actions_match_the_status(self):
         booked = self.make_appointment(self.patient, when=self.at(self.tomorrow, 10))
@@ -147,8 +204,8 @@ class DayViewTests(AppointmentTestCase):
         now = timezone.now()
         late = self.make_appointment(second, when=now, status=Status.ARRIVED)
         early = self.make_appointment(first, when=now, status=Status.ARRIVED)
-        Appointment.objects.filter(pk=early.pk).update(updated_at=now - timedelta(minutes=20))
-        Appointment.objects.filter(pk=late.pk).update(updated_at=now - timedelta(minutes=5))
+        Appointment.objects.filter(pk=early.pk).update(arrived_at=now - timedelta(minutes=20))
+        Appointment.objects.filter(pk=late.pk).update(arrived_at=now - timedelta(minutes=5))
 
         self.login(self.receptionist)
         response = self.client.get(reverse("appointments:day"))

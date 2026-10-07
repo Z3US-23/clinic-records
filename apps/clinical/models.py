@@ -84,6 +84,13 @@ class Visit(models.Model):
         return ""
 
     @property
+    def temperature_f(self):
+        """The temperature in °F, rounded to 0.1 (it is stored in °C), or None."""
+        if self.temperature_c is None:
+            return None
+        return round(float(self.temperature_c) * 9 / 5 + 32, 1)
+
+    @property
     def bmi(self):
         if self.weight_kg and self.height_cm:
             metres = float(self.height_cm) / 100

@@ -1,13 +1,21 @@
-"""refresh_for_appointment() and refresh_for_visit(): keeping reminders in step with changes."""
+"""refresh_for_appointment(), refresh_for_visit() and refresh_for_patient(): keeping reminders
+in step with changes, including bringing back reminders the system skipped."""
 
 from apps.appointments.models import Appointment
 from apps.reminders.models import Reminder, ReminderKind
-from apps.reminders.services import format_date, generate_reminders, refresh_for_appointment, refresh_for_visit
+from apps.reminders.services import (
+    format_date,
+    generate_reminders,
+    refresh_for_appointment,
+    refresh_for_patient,
+    refresh_for_visit,
+)
 
 from .base import FROZEN_NOW, FROZEN_TODAY, FrozenClockTestCase
 
 Status = Appointment.Status
 PENDING, SENT, SKIPPED = Reminder.Status.PENDING, Reminder.Status.SENT, Reminder.Status.SKIPPED
+BY_STAFF, BY_SYSTEM = Reminder.SkipReason.STAFF, Reminder.SkipReason.SYSTEM
 
 
 class RefreshForAppointmentTests(FrozenClockTestCase):
@@ -211,3 +219,190 @@ class RefreshForVisitTests(FrozenClockTestCase):
         self.old_visit.save()
         refresh_for_visit(self.old_visit)
         self.assertTrue(Reminder.objects.filter(pk=sent.pk, status=SENT).exists())
+
+
+class SkippedBySystemComesBackTests(FrozenClockTestCase):
+    """A reminder the system skipped comes back when the reason goes away. One skipped by staff never does."""
+
+    def state(self, reminder):
+        reminder.refresh_from_db()
+        return reminder.status, reminder.skip_reason
+
+    def set_status(self, appointment, status):
+        appointment.status = status
+        appointment.save()
+        refresh_for_appointment(appointment)
+
+    def test_undoing_a_status_change_brings_the_appointment_reminder_back(self):
+        round_trips = [
+            (Status.ARRIVED, Status.SCHEDULED),  # "Waiting" tapped by mistake
+            (Status.NO_SHOW, Status.SCHEDULED),  # "Did not come", then they rang to say they are coming
+            (Status.RESCHEDULE_REQUESTED, Status.CONFIRMED),  # asked for another time, then confirmed after all
+        ]
+        for away, back in round_trips:
+            with self.subTest(away=away, back=back):
+                appointment = self.make_appointment(self.patient, when=self.at(self.day(1), 10, 0))
+                refresh_for_appointment(appointment)
+                reminder = Reminder.objects.get(appointment=appointment)
+                Reminder.objects.filter(pk=reminder.pk).update(message="old words")
+
+                self.set_status(appointment, away)
+                self.assertEqual(self.state(reminder), (SKIPPED, BY_SYSTEM))
+
+                self.set_status(appointment, back)
+                self.assertEqual(self.state(reminder), (PENDING, ""))
+                self.assertEqual(reminder.due_date, FROZEN_TODAY)
+                self.assertIn(appointment.get_confirm_url(), reminder.message)
+
+    def test_a_reminder_skipped_by_staff_stays_skipped(self):
+        appointment = self.make_appointment(self.patient, when=self.at(self.day(1), 10, 0))
+        refresh_for_appointment(appointment)
+        reminder = Reminder.objects.get(appointment=appointment)
+        Reminder.objects.filter(pk=reminder.pk).update(status=SKIPPED, skip_reason=BY_STAFF)
+
+        self.set_status(appointment, Status.ARRIVED)
+        self.set_status(appointment, Status.SCHEDULED)
+        for field, away, back in (("reminders_opt_in", False, True), ("is_archived", True, False)):
+            setattr(self.patient, field, away)
+            self.patient.save()
+            refresh_for_patient(self.patient)
+            setattr(self.patient, field, back)
+            self.patient.save()
+            refresh_for_patient(self.patient)
+        generate_reminders(self.clinic)
+
+        self.assertEqual(self.state(reminder), (SKIPPED, BY_STAFF))
+
+    def test_outside_the_window_it_comes_back_on_the_right_day(self):
+        appointment = self.make_appointment(self.patient, when=self.at(self.day(5), 10, 0))
+        generate_reminders(self.clinic, today=self.day(4))
+        reminder = Reminder.objects.get(appointment=appointment)
+        self.set_status(appointment, Status.RESCHEDULE_REQUESTED)
+
+        self.set_status(appointment, Status.SCHEDULED)  # today is 5 days before: too early
+        self.assertEqual(self.state(reminder), (SKIPPED, BY_SYSTEM))
+        generate_reminders(self.clinic, today=self.day(3))
+        self.assertEqual(self.state(reminder), (SKIPPED, BY_SYSTEM))
+
+        generate_reminders(self.clinic, today=self.day(4))
+        self.assertEqual(self.state(reminder), (PENDING, ""))
+        self.assertEqual(reminder.due_date, self.day(4))
+
+    def test_opting_back_in_or_restoring_brings_reminders_back(self):
+        appointment = self.make_appointment(self.patient, when=self.at(self.day(1), 10, 0))
+        generate_reminders(self.clinic)
+        reminder = Reminder.objects.get(appointment=appointment)
+
+        for field, away, back in (("reminders_opt_in", False, True), ("is_archived", True, False)):
+            with self.subTest(field=field):
+                setattr(self.patient, field, away)
+                self.patient.save()
+                generate_reminders(self.clinic)
+                self.assertEqual(self.state(reminder), (SKIPPED, BY_SYSTEM))
+
+                setattr(self.patient, field, back)
+                self.patient.save()
+                self.assertEqual(generate_reminders(self.clinic), 1)
+                self.assertEqual(self.state(reminder), (PENDING, ""))
+
+    def test_missed_follow_up_comes_back_when_the_booking_falls_through(self):
+        self.make_visit(self.patient, visit_date=self.at(self.day(-30)), follow_up_date=self.day(-5))
+        outcomes = [
+            (Status.CANCELLED, self.at(self.day(2))),
+            (Status.NO_SHOW, self.at(self.day(0), 9, 0)),
+        ]
+        for outcome, when in outcomes:
+            with self.subTest(outcome=outcome):
+                generate_reminders(self.clinic)
+                overdue = Reminder.objects.get(kind=ReminderKind.OVERDUE)
+                self.assertEqual(self.state(overdue), (PENDING, ""))
+
+                booking = self.make_appointment(self.patient, when=when)
+                generate_reminders(self.clinic)
+                self.assertEqual(self.state(overdue), (SKIPPED, BY_SYSTEM))
+
+                Appointment.objects.filter(pk=booking.pk).update(status=outcome)
+                generate_reminders(self.clinic)
+                self.assertEqual(self.state(overdue), (PENDING, ""))
+                self.assertEqual(overdue.due_date, FROZEN_TODAY)
+
+    def test_missed_follow_up_comes_back_when_a_booking_goes_stale(self):
+        """Booked for this morning: not chased today. Still never marked tomorrow: chased again."""
+        self.make_visit(self.patient, visit_date=self.at(self.day(-30)), follow_up_date=self.day(-5))
+        generate_reminders(self.clinic)
+        overdue = Reminder.objects.get(kind=ReminderKind.OVERDUE)
+        self.make_appointment(self.patient, when=self.at(self.day(0), 9, 0))
+
+        generate_reminders(self.clinic)
+        self.assertEqual(self.state(overdue), (SKIPPED, BY_SYSTEM))
+
+        generate_reminders(self.clinic, today=self.day(1))
+        self.assertEqual(self.state(overdue), (PENDING, ""))
+        self.assertEqual(overdue.due_date, self.day(1))
+
+    def test_follow_up_comes_back_when_the_patient_wants_another_time(self):
+        self.make_visit(self.patient, visit_date=self.at(self.day(-20)), follow_up_date=self.day(1))
+        generate_reminders(self.clinic)
+        follow_up = Reminder.objects.get(kind=ReminderKind.FOLLOW_UP)
+        booking = self.make_appointment(self.patient, when=self.at(self.day(3)))
+        generate_reminders(self.clinic)
+        self.assertEqual(self.state(follow_up), (SKIPPED, BY_SYSTEM))
+
+        self.set_status(booking, Status.RESCHEDULE_REQUESTED)
+        generate_reminders(self.clinic)
+
+        self.assertEqual(self.state(follow_up), (PENDING, ""))
+
+    def test_too_old_to_chase_does_not_come_back(self):
+        visit = self.make_visit(self.patient, visit_date=self.at(self.day(-90)), follow_up_date=self.day(-61))
+        overdue = self.make_reminder(kind=ReminderKind.OVERDUE, visit=visit, status=SKIPPED, skip_reason=BY_SYSTEM)
+
+        self.assertEqual(generate_reminders(self.clinic), 0)
+        self.assertEqual(self.state(overdue), (SKIPPED, BY_SYSTEM))
+
+
+class RefreshForPatientTests(FrozenClockTestCase):
+    def setUp(self):
+        super().setUp()
+        self.appointment = self.make_appointment(self.patient, when=self.at(self.day(1), 10, 0))
+        generate_reminders(self.clinic)
+        self.automatic = Reminder.objects.get(appointment=self.appointment)
+        self.custom = self.make_reminder(message="Your report is ready.")
+        self.others = self.make_reminder(patient=self.make_patient(full_name="Someone Else"))
+
+    def change(self, **fields):
+        for name, value in fields.items():
+            setattr(self.patient, name, value)
+        self.patient.save()
+        refresh_for_patient(self.patient)
+
+    def states(self):
+        rows = {"automatic": self.automatic, "custom": self.custom, "others": self.others}
+        return {
+            name: Reminder.objects.values_list("status", "skip_reason").get(pk=reminder.pk)
+            for name, reminder in rows.items()
+        }
+
+    def test_opting_out_skips_automatic_reminders_at_once(self):
+        self.change(reminders_opt_in=False)
+        self.assertEqual(
+            self.states(),
+            {"automatic": (SKIPPED, BY_SYSTEM), "custom": (PENDING, ""), "others": (PENDING, "")},
+        )
+
+    def test_archiving_skips_custom_messages_too(self):
+        self.change(is_archived=True)
+        self.assertEqual(
+            self.states(),
+            {"automatic": (SKIPPED, BY_SYSTEM), "custom": (SKIPPED, BY_SYSTEM), "others": (PENDING, "")},
+        )
+
+    def test_opting_back_in_brings_reminders_back_at_once(self):
+        self.change(reminders_opt_in=False)
+        self.change(reminders_opt_in=True)
+        self.assertEqual(self.states()["automatic"], (PENDING, ""))
+
+    def test_sent_reminders_are_never_changed(self):
+        Reminder.objects.filter(pk=self.automatic.pk).update(status=SENT, sent_at=FROZEN_NOW)
+        self.change(is_archived=True)
+        self.assertEqual(self.states()["automatic"], (SENT, ""))

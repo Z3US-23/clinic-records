@@ -41,6 +41,34 @@
   </section>
 {% endif %}
 
+{% if duplicates %}
+  <section class="card mb-2 import-errors" aria-labelledby="import-duplicates-title">
+    <div class="card-header">
+      <h2 id="import-duplicates-title">{% include "includes/icon.html" with name="users" %} {% if errors %}Also check these patients{% else %}Nothing was imported yet{% endif %}</h2>
+      <span class="badge badge-warning">{{ duplicates_total }} may already be registered</span>
+    </div>
+    <div class="card-body">
+      <p class="mb-0">
+        These rows look like a patient you already have (same name and the same date of birth or mobile number), or like an earlier row of the file.
+        Search for them in the patient list to check. Then choose the file again below and say what to do with them.
+      </p>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-compact table-stack">
+        <thead><tr><th scope="col">Row</th><th scope="col">Looks like</th></tr></thead>
+        <tbody>
+          {% for row, problem in duplicates %}
+            <tr><td data-label="Row" class="nowrap">Row {{ row }}</td><td data-label="Looks like">{{ problem }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if duplicates_total > duplicates|length %}
+      <div class="card-footer muted small">Showing the first {{ duplicates|length }} of {{ duplicates_total }}.</div>
+    {% endif %}
+  </section>
+{% endif %}
+
 <div class="grid-sidebar">
   <div class="stack">
     <section class="card" aria-labelledby="how-title">
@@ -49,9 +77,9 @@
         <ol class="import-steps">
           <li><strong>Download the template</strong> (button above). It is a spreadsheet with the right column names and one made-up example patient.</li>
           <li><strong>Open it in Excel or Google Sheets.</strong> Keep the first row as it is. Delete the example patient and type your patients underneath: <em>one row per patient</em>.</li>
-          <li><strong>Only three things are needed for each patient:</strong> full name, sex and mobile number. Leave a cell empty if you don't know it.</li>
+          <li><strong>Only two things are needed for each patient:</strong> full name and sex. Add the mobile number whenever you have it: WhatsApp reminders need it. Leave a cell empty if you don't know it.</li>
           <li><strong>Save it as “CSV UTF-8”.</strong> In Excel: File › Save As › <em>CSV UTF-8 (Comma delimited)</em>. In Google Sheets: File › Download › <em>Comma-separated values</em>.</li>
-          <li><strong>Upload the file below.</strong> We check every row first. If anything needs fixing, <em>nothing</em> is imported and you get a list of the rows to correct, so you never end up with half a register.</li>
+          <li><strong>Upload the file below.</strong> We check every row first. If anything needs fixing, <em>nothing</em> is imported and you get a list of the rows to correct, so you never end up with half a register. Patients who look already registered are listed too, and you decide whether to skip them.</li>
         </ol>
         <div class="alert alert-info mb-0">
           {% include "includes/icon.html" with name="info" %}
@@ -68,7 +96,18 @@
       <div class="card-body">
         <form method="post" enctype="multipart/form-data" class="form">
           {% csrf_token %}
-          {% include "includes/form_fields.html" with form=form %}
+          {% include "includes/field.html" with field=form.file %}
+          {% if duplicates %}{# only once an upload found some: a first upload always stops to show them #}
+            <fieldset class="form-section duplicate-choice">
+              <legend>{{ duplicates_total }} patient{{ duplicates_total|pluralize }} in this file look{{ duplicates_total|pluralize:"s," }} already registered. What should we do?</legend>
+              <div class="stack-sm">
+                {% for option in form.duplicates %}
+                  <label class="field field-check">{{ option.tag }}<span>{{ option.choice_label }}</span></label>
+                {% endfor %}
+              </div>
+              {{ form.duplicates.errors }}
+            </fieldset>
+          {% endif %}
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">{% include "includes/icon.html" with name="upload" %}Check and import</button>
             <a class="btn btn-ghost" href="{% url 'patients:list' %}">Cancel</a>

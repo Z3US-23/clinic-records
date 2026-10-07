@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Add lab result – {{ patient.full_name }}{% endblock %}
+{% block title %}{% if is_edit %}Edit{% else %}Add{% endif %} lab result – {{ patient.full_name }}{% endblock %}
 {% block content_class %}content-narrow{% endblock %}
 
 {% block content %}
@@ -12,7 +12,7 @@
       {% if from_visit %}<a href="{{ from_visit.get_absolute_url }}">Visit on {{ from_visit.visit_date|date:"j M Y" }}</a><span>/</span>{% endif %}
       <span>Lab result</span>
     </div>
-    <h1>Add lab result</h1>
+    <h1>{% if is_edit %}Edit lab result{% else %}Add lab result{% endif %}</h1>
     <p class="subtitle">Type the values, attach the report, or both. Files stay private to clinic doctors.</p>
   </div>
 </div>
@@ -21,7 +21,13 @@
 
 <form method="post" enctype="multipart/form-data" class="card">
   {% csrf_token %}
-  <div class="card-body">
+  <div class="card-body stack">
+    {% if is_edit and lab.file %}
+      <p class="form-hint mb-0">
+        Report attached: <a href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{{ lab.original_filename|default:"report" }}</a>.
+        Choose a new file below only to replace it.
+      </p>
+    {% endif %}
     {% include "includes/form_fields.html" with form=form grid=True %}
   </div>
   <div class="card-footer form-actions">

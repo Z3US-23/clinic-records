@@ -36,7 +36,7 @@
       </div>
       <dl class="kv profile-contact">
         <dt>Mobile</dt>
-        <dd>{% if phone_tel %}<a href="tel:+{{ phone_tel }}">{% include "includes/icon.html" with name="phone" size="sm" %} {{ patient.phone }}</a>{% else %}{{ patient.phone }}{% endif %}</dd>
+        <dd>{% if phone_tel %}<a href="tel:+{{ phone_tel }}">{% include "includes/icon.html" with name="phone" size="sm" %} {{ patient.phone }}</a>{% elif patient.phone %}{{ patient.phone }}{% else %}<span class="subtle">Not given</span>{% endif %}</dd>
         <dt>WhatsApp</dt>
         <dd>{% if patient.whatsapp_number %}{{ patient.whatsapp_number|phone_display }}{% if not patient.reminders_opt_in %} <span class="subtle">(no reminders)</span>{% endif %}{% else %}<span class="subtle">No valid number</span>{% endif %}</dd>
         {% if patient.date_of_birth %}

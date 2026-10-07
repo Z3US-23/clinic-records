@@ -11,7 +11,7 @@
   --border-strong: #c9d3da;
   --text: #13202b;
   --text-muted: #5a6876;
-  --text-subtle: #8492a0;
+  --text-subtle: #606d7b;  /* 4.7:1 or better on every surface (WCAG AA) */
 
   --primary: #0f766e;
   --primary-hover: #0c5f58;
@@ -60,7 +60,7 @@
     --border-strong: #3a4751;
     --text: #e6edf2;
     --text-muted: #a3b1bc;
-    --text-subtle: #7d8c98;
+    --text-subtle: #8f9daa;
     --primary: #2fb3a0;
     --primary-hover: #45c4b1;
     --primary-soft: #133430;
@@ -109,7 +109,9 @@ small, .small { font-size: 0.85rem; }
 code, .mono { font-family: var(--mono); font-size: 0.9em; }
 img, svg { vertical-align: middle; }
 [hidden] { display: none !important; }
-:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--radius-sm); }
+/* Keyboard focus: a solid ring in the brand colour, clear on every background in both themes. */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
 
 .icon { width: 18px; height: 18px; flex-shrink: 0; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .icon-sm { width: 15px; height: 15px; }
@@ -170,7 +172,7 @@ img, svg { vertical-align: middle; }
   backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
 }
 .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
-.menu-toggle { display: none; }
+.topbar .menu-toggle { display: none; }  /* .topbar: must beat .icon-btn, declared further down */
 
 .content { padding: 24px; width: 100%; max-width: 1280px; flex: 1; }
 .content-narrow { max-width: 760px; }
@@ -258,6 +260,8 @@ a.stat:hover { text-decoration: none; border-color: var(--border-strong); }
 }
 .btn:hover { text-decoration: none; }
 .btn:disabled, .btn.disabled { opacity: 0.55; cursor: not-allowed; pointer-events: none; }
+/* The button just pressed while its form is being sent (app.js): a second tap does nothing. */
+.btn.is-busy { opacity: 0.6; cursor: progress; pointer-events: none; }
 .btn-primary { background: var(--primary); color: var(--on-primary); }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
@@ -304,7 +308,13 @@ a.chip:hover { text-decoration: none; border-color: var(--border-strong); color:
 .alert-danger { background: var(--danger-soft); color: var(--danger-text); }
 .messages { margin-bottom: 8px; }
 .messages .alert { box-shadow: var(--shadow-sm); }
-.alert-close { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.7; padding: 0 2px; font-size: 1.1rem; line-height: 1; }
+/* A 36px tap target; the negative margin keeps the alert itself as slim as before. */
+.alert-close {
+  margin: -8px -10px -8px auto; display: inline-grid; place-items: center; min-width: 36px; min-height: 36px;
+  padding: 0; background: none; border: 0; border-radius: var(--radius-sm); color: inherit; cursor: pointer;
+  opacity: 0.7; font-size: 1.25rem; line-height: 1;
+}
+.alert-close:hover { opacity: 1; }
 
 /* Red allergy strip — shown wherever a patient's clinical info is visible */
 .allergy-banner { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger-text); font-weight: 600; font-size: 0.9rem; }
@@ -337,7 +347,8 @@ select, textarea {
 textarea { height: auto; min-height: 90px; padding: 10px 12px; resize: vertical; line-height: 1.45; }
 select { appearance: none; padding-right: 32px; background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%); background-position: calc(100% - 17px) 17px, calc(100% - 12px) 17px; background-size: 5px 5px; background-repeat: no-repeat; }
 select[multiple] { height: auto; background-image: none; padding: 6px; }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: var(--focus); }
+/* Fields keep their soft glow; the transparent outline still shows in Windows high-contrast mode. */
+input:focus, select:focus, textarea:focus { outline: 2px solid transparent; border-color: var(--primary); box-shadow: var(--focus); }
 input[type="file"] { font: inherit; font-size: 0.9rem; }
 input[type="checkbox"], input[type="radio"] { width: 17px; height: 17px; accent-color: var(--primary); margin: 0; }
 
@@ -413,6 +424,9 @@ a.list-item:hover { background: var(--surface-2); text-decoration: none; }
 .patient-banner .grow { flex: 1; min-width: 200px; }
 .patient-banner .name { font-size: 1.1rem; font-weight: 700; color: var(--text); }
 .patient-banner .facts { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 0.86rem; color: var(--text-muted); margin-top: 2px; }
+/* A long allergy list gets its own full-width row, with the warning icon beside its first line. */
+.patient-banner .allergy-banner { flex: 1 1 100%; align-items: flex-start; }
+.patient-banner .allergy-banner .icon { margin-top: 3px; }
 
 /* ---------- Empty state ---------- */
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
@@ -460,12 +474,19 @@ a.list-item:hover { background: var(--surface-2); text-decoration: none; }
   .sidebar.open { transform: none; }
   .sidebar-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 32, 0.4); z-index: 35; }
   .main { margin-left: 0; padding-bottom: 64px; }
-  .menu-toggle { display: inline-grid; }
+  .topbar .menu-toggle { display: inline-grid; }
   .topbar { padding: 0 14px; gap: 8px; }
-  .topbar-actions .btn-label { display: none; }
+  /* Icon-only on phones, but the words stay for screen readers (same as .visually-hidden). */
+  .topbar-actions .btn-label {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   .topbar-actions .btn { padding: 0 10px; }
   .topbar-actions .hide-mobile { display: none; }
   .content { padding: 16px; }
+  /* Thumb-sized buttons (40px) with room between them, e.g. "Did not come" next to "Cancel". */
+  .btn-sm { height: 40px; padding: 0 12px; }
+  .btn-group { gap: 8px; }
   .grid-2, .grid-3, .form-grid, .form-grid-3 { grid-template-columns: minmax(0, 1fr); }
   .formset-row { grid-template-columns: 1fr 1fr; }
   .formset-row .field:first-child { grid-column: 1 / -1; }

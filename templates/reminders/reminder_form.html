@@ -16,7 +16,12 @@
 
 {% include "includes/patient_banner.html" with patient=patient %}
 
-{% if not has_whatsapp %}
+{% if send_blocker %}
+  <div class="alert alert-warning">
+    {% include "includes/icon.html" with name="alert" %}
+    <div>{{ send_blocker }}</div>
+  </div>
+{% elif not has_whatsapp %}
   <div class="alert alert-warning">
     {% include "includes/icon.html" with name="alert" %}
     <div>
@@ -38,7 +43,7 @@
   </div>
   <div class="card-footer form-actions">
     <button type="submit" name="action" value="save" class="btn btn-primary">{% include "includes/icon.html" with name="check" %}Save</button>
-    {% if has_whatsapp %}
+    {% if has_whatsapp and not send_blocker %}
       <button type="submit" name="action" value="send" class="btn btn-whatsapp" data-wa-send data-after-url="{% url 'reminders:list' %}?tab=sent">
         {% include "includes/icon.html" with name="whatsapp" %}Save and send on WhatsApp
       </button>

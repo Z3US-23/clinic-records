@@ -7,7 +7,8 @@ What goes in the ZIP:
 
 Rules:
   * Only ONE clinic's data, always. Every query below is filtered by `clinic`.
-  * No secrets: no passwords, no appointment confirmation tokens.
+  * No secrets: no passwords, no appointment confirmation tokens. Reminder messages contain the
+    patient's confirmation link (/c/<token>/), so the token is cut out of every message.
   * Spreadsheet safety: a cell that starts with = + - @ (or a tab / carriage return) gets a leading
     apostrophe, so Excel shows it as text instead of running it as a formula ("CSV injection").
   * CSVs are UTF-8 with a BOM so Excel shows Urdu and Hindi names correctly.
@@ -18,6 +19,7 @@ Rules:
 import csv
 import io
 import os
+import re
 import shutil
 import zipfile
 from dataclasses import dataclass, field
@@ -26,6 +28,7 @@ from tempfile import SpooledTemporaryFile
 from zoneinfo import ZoneInfo
 
 from django.core.exceptions import SuspiciousFileOperation
+from django.db.models import F
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 
@@ -39,6 +42,12 @@ FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 SPOOL_MAX_BYTES = 20 * 1024 * 1024  # keep up to 20 MB in memory, then use a temporary file
 CHUNK_SIZE = 1000  # rows fetched from the database at a time
 COPY_BUFFER = 1024 * 1024
+
+# A patient's confirmation link, /c/<token>/, wherever it appears in a message (whatever the site
+# address was when the message was written, and even if staff pasted it into a custom message).
+# Real tokens are 32 characters from secrets.token_urlsafe(24).
+CONFIRM_LINK_RE = re.compile(r"/c/[A-Za-z0-9_-]{16,}/?")
+CONFIRM_LINK_REMOVED = "/c/(link removed)/"
 
 
 @dataclass
@@ -76,7 +85,7 @@ def export_counts(clinic):
         "lab_files": LabResult.objects.filter(clinic=clinic).exclude(file="").count(),
         "appointments": Appointment.objects.filter(clinic=clinic).count(),
         "reminders": Reminder.objects.filter(clinic=clinic).count(),
-        "staff": Membership.objects.filter(clinic=clinic).count(),
+        "staff": _staff(clinic).count(),
     }
 
 
@@ -298,7 +307,7 @@ REMINDER_COLUMNS = [
     ("patient_name", ""),
     ("appointment_id", ""),
     ("visit_id", ""),
-    ("message", "The WhatsApp text"),
+    ("message", "The WhatsApp text (the patient's confirmation link is removed)"),
     ("channel", ""),
     ("sent_at", ""),
     ("sent_by", ""),
@@ -306,15 +315,27 @@ REMINDER_COLUMNS = [
 ]
 
 
+def without_confirm_links(message, token=""):
+    """The message with every confirmation link (and the appointment's own token) taken out."""
+    text = CONFIRM_LINK_RE.sub(CONFIRM_LINK_REMOVED, message or "")
+    if token:  # belt and braces: the token on its own, e.g. if the link was mangled when edited
+        text = text.replace(token, "(removed)")
+    return text
+
+
 def _reminder_rows(clinic, person):
     reminders = (
-        Reminder.objects.filter(clinic=clinic).select_related("patient", "sent_by").order_by("due_date", "pk")
+        Reminder.objects.filter(clinic=clinic)
+        .select_related("patient", "sent_by")
+        .annotate(confirm_token=F("appointment__confirm_token"))
+        .order_by("due_date", "pk")
     )
     for r in reminders.iterator(chunk_size=CHUNK_SIZE):
+        # The confirmation link inside the message is a secret: it is deliberately not exported.
         yield [
             r.pk, r.get_kind_display(), r.get_status_display(), r.due_date, r.patient_id, r.patient.mrn,
-            r.patient.full_name, r.appointment_id, r.visit_id, r.message, r.get_channel_display(), r.sent_at,
-            person(r.sent_by), r.created_at,
+            r.patient.full_name, r.appointment_id, r.visit_id, without_confirm_links(r.message, r.confirm_token),
+            r.get_channel_display(), r.sent_at, person(r.sent_by), r.created_at,
         ]
 
 
@@ -330,8 +351,14 @@ STAFF_COLUMNS = [
 ]
 
 
+def _staff(clinic):
+    """The clinic's staff. Waiting invitations are left out: until the person accepts, their name
+    and account belong to them, not to the clinic that invited them."""
+    return Membership.objects.filter(clinic=clinic, accepted_at__isnull=False)
+
+
 def _staff_rows(clinic):
-    memberships = Membership.objects.filter(clinic=clinic).select_related("user").order_by("user__full_name")
+    memberships = _staff(clinic).select_related("user").order_by("user__full_name")
     for m in memberships:
         yield [
             m.user.full_name, m.title, m.user.email, m.get_role_display(), m.qualifications, m.registration_number,

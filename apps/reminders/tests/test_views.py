@@ -7,6 +7,7 @@ from django.contrib.messages import get_messages
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.appointments.models import Appointment
 from apps.core.models import AuditLog
 from apps.core.testing import make_appointment, make_patient
 from apps.reminders.models import Reminder, ReminderKind
@@ -15,6 +16,8 @@ from .base import ReminderTestCase
 
 PENDING, SENT, SKIPPED = Reminder.Status.PENDING, Reminder.Status.SENT, Reminder.Status.SKIPPED
 WA_PREFIX = "https://wa.me/923001234567?text="
+OPTED_OUT_TEXT = "asked not to get WhatsApp reminders"
+APPOINTMENT_GONE_TEXT = "This appointment has already happened or was cancelled or changed"
 
 
 def message_texts(response):
@@ -99,6 +102,49 @@ class ReminderListTests(ReminderViewTestCase):
         self.assertContains(response, "Send again")
         self.assertContains(response, reverse("reminders:send", args=[sent.pk]))
 
+    def test_sent_tab_has_no_send_again_when_it_cant_be_sent(self):
+        now = timezone.now()
+        opted_out = self.make_patient(full_name="Sana Optout", reminders_opt_in=False)
+        cancelled = make_appointment(self.patient, self.doctor, self.tomorrow_evening(),
+                                     status=Appointment.Status.CANCELLED)
+        over = make_appointment(self.patient, self.doctor, now - timedelta(hours=2))
+        refused = [
+            self.make_reminder(patient=opted_out, kind=ReminderKind.FOLLOW_UP, status=SENT, sent_at=now),
+            self.make_reminder(kind=ReminderKind.APPOINTMENT, appointment=cancelled, status=SENT, sent_at=now),
+            self.make_reminder(kind=ReminderKind.APPOINTMENT, appointment=over, status=SENT, sent_at=now),
+        ]
+        custom_to_opted_out = self.make_reminder(patient=opted_out, status=SENT, sent_at=now)
+        self.login(self.receptionist)
+
+        response = self.client.get(self.url, {"tab": "sent"})
+
+        self.assertEqual(len(response.context["reminders"]), 4)
+        for reminder in refused:
+            self.assertNotContains(response, reverse("reminders:send", args=[reminder.pk]))
+        self.assertContains(response, reverse("reminders:send", args=[custom_to_opted_out.pk]))
+        self.assertContains(response, "Send again", count=1)
+
+    def test_pending_reminder_that_cant_be_sent_says_why(self):
+        archived = self.make_patient(full_name="Old Record", is_archived=True)
+        reminder = self.make_reminder(patient=archived)
+        self.login(self.receptionist)
+
+        response = self.client.get(self.url)
+
+        self.assertContains(response, "record is archived")
+        self.assertNotContains(response, reverse("reminders:send", args=[reminder.pk]))
+        self.assertContains(response, reverse("reminders:skip", args=[reminder.pk]))
+
+    def test_skipped_tab_says_who_skipped_it(self):
+        self.make_reminder(status=SKIPPED, skip_reason=Reminder.SkipReason.STAFF)
+        self.make_reminder(status=SKIPPED, skip_reason=Reminder.SkipReason.SYSTEM)
+        self.login(self.receptionist)
+
+        response = self.client.get(self.url, {"tab": "skipped"})
+
+        self.assertContains(response, "Skipped by staff")
+        self.assertContains(response, "No longer needed")
+
     def test_unknown_tab_falls_back_to_to_send(self):
         self.login(self.owner)
         response = self.client.get(self.url, {"tab": "nonsense"})
@@ -115,6 +161,15 @@ class ReminderListTests(ReminderViewTestCase):
         self.assertContains(response, 'href="tel:12345"')
         self.assertContains(response, reverse("patients:update", args=[no_number.pk]))
         self.assertNotContains(response, reverse("reminders:send", args=[reminder.pk]))
+
+    def test_call_link_for_a_landline_uses_plain_digits(self):
+        """A landline gets no WhatsApp, but the Call link dials it, even if typed with Urdu digits."""
+        landline = self.make_patient(full_name="Kamran Shah", phone="۰۴۲-۳۵۷۶۱۲۳۴")
+        self.make_reminder(patient=landline)
+        self.login(self.receptionist)
+        response = self.client.get(self.url)
+        self.assertContains(response, "No WhatsApp number")
+        self.assertContains(response, 'href="tel:+924235761234"')
 
     def test_rows_link_to_the_patient_and_show_the_phone(self):
         self.make_reminder()
@@ -274,6 +329,62 @@ class SendReminderTests(ReminderViewTestCase):
         reminder.refresh_from_db()
         self.assertEqual(reminder.status, PENDING)
 
+    def assert_refused(self, reminder, expected_text, status=PENDING):
+        response = self.send(reminder)
+        self.assertRedirects(response, reverse("reminders:list"), fetch_redirect_response=False)
+        self.assertIn(expected_text, " ".join(message_texts(response)))
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.status, status)
+        self.assertFalse(self.audit_entries(reminder, AuditLog.Action.SEND).exists())
+
+    def test_automatic_reminders_are_not_sent_to_a_patient_who_opted_out(self):
+        self.patient.reminders_opt_in = False
+        self.patient.save()
+        appointment = make_appointment(self.patient, self.doctor, self.tomorrow_evening())
+        self.login(self.receptionist)
+        for kind, fields in (
+            (ReminderKind.APPOINTMENT, {"appointment": appointment}),
+            (ReminderKind.FOLLOW_UP, {}),
+            (ReminderKind.OVERDUE, {}),
+        ):
+            with self.subTest(kind=kind):
+                reminder = self.make_reminder(kind=kind, **fields)
+                self.assert_refused(reminder, f"Ali Raza {OPTED_OUT_TEXT}")
+
+    def test_a_custom_message_to_a_patient_who_opted_out_still_sends(self):
+        self.patient.reminders_opt_in = False
+        self.patient.save()
+        reminder = self.make_reminder(message="Your report is ready.")
+        self.login(self.receptionist)
+
+        self.assertTrue(self.send(reminder)["Location"].startswith(WA_PREFIX))
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.status, SENT)
+
+    def test_reminder_for_a_cancelled_or_past_appointment_is_not_sent(self):
+        self.login(self.receptionist)
+        appointments = {
+            "cancelled": dict(when=self.tomorrow_evening(), status=Appointment.Status.CANCELLED),
+            "time passed": dict(when=timezone.now() - timedelta(hours=1)),
+            "seen": dict(when=timezone.now() + timedelta(hours=1), status=Appointment.Status.COMPLETED),
+        }
+        for label, appointment_fields in appointments.items():
+            for status in (PENDING, SENT):  # "Send on WhatsApp" and "Send again"
+                with self.subTest(appointment=label, status=status):
+                    appointment = make_appointment(self.patient, self.doctor, **appointment_fields)
+                    reminder = self.make_reminder(
+                        kind=ReminderKind.APPOINTMENT, appointment=appointment, status=status,
+                        sent_at=timezone.now() if status == SENT else None,
+                    )
+                    self.assert_refused(reminder, APPOINTMENT_GONE_TEXT, status=status)
+
+    def test_upcoming_appointment_reminder_still_sends(self):
+        appointment = make_appointment(self.patient, self.doctor, self.tomorrow_evening(),
+                                       status=Appointment.Status.CONFIRMED)
+        reminder = self.make_reminder(kind=ReminderKind.APPOINTMENT, appointment=appointment)
+        self.login(self.receptionist)
+        self.assertTrue(self.send(reminder)["Location"].startswith(WA_PREFIX))
+
 
 # --- Skip ------------------------------------------------------------------------------
 
@@ -291,6 +402,7 @@ class SkipReminderTests(ReminderViewTestCase):
         self.assertRedirects(response, reverse("reminders:list"), fetch_redirect_response=False)
         reminder.refresh_from_db()
         self.assertEqual(reminder.status, SKIPPED)
+        self.assertEqual(reminder.skip_reason, Reminder.SkipReason.STAFF)  # so it never comes back by itself
         entry = self.audit_entries(reminder, AuditLog.Action.UPDATE).get()
         self.assertEqual(entry.summary, f"Skipped custom reminder for {self.patient.mrn}")
 
@@ -359,6 +471,27 @@ class ReminderUpdateTests(ReminderViewTestCase):
         self.assertEqual(response["Location"], WA_PREFIX + quote("New words\nLine two"))
         reminder.refresh_from_db()
         self.assertEqual(reminder.status, SENT)
+
+    def test_save_and_send_is_refused_when_it_cant_be_sent(self):
+        self.patient.reminders_opt_in = False
+        self.patient.save()
+        appointment = make_appointment(self.patient, self.doctor, self.tomorrow_evening())
+        reminder = self.make_reminder(kind=ReminderKind.APPOINTMENT, appointment=appointment, message="Original words")
+        self.login(self.receptionist)
+
+        response = self.client.get(self.url(reminder))
+        self.assertContains(response, OPTED_OUT_TEXT)
+        self.assertNotContains(response, "Save and send on WhatsApp")
+
+        response = self.client.post(self.url(reminder), {
+            "message": "New words", "due_date": self.today.isoformat(), "action": "send",
+        })
+        self.assertRedirects(response, reverse("reminders:list"), fetch_redirect_response=False)
+        self.assertIn(OPTED_OUT_TEXT, " ".join(message_texts(response)))
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.message, "New words")  # the edit is kept
+        self.assertEqual(reminder.status, PENDING)
+        self.assertFalse(self.audit_entries(reminder, AuditLog.Action.SEND).exists())
 
     def test_moving_to_a_later_day(self):
         reminder = self.make_reminder()
@@ -454,6 +587,16 @@ class CustomMessageTests(ReminderViewTestCase):
         response = self.client.post(self.patient_url(self.other_patient), {"message": "Hi", "action": "send"})
         self.assertEqual(response.status_code, 404)
         self.assertFalse(Reminder.objects.filter(kind=ReminderKind.CUSTOM, clinic=self.clinic).exists())
+
+    def test_odd_patient_ids_are_404_not_a_crash(self):
+        # "²" and "①" are digits to str.isdigit() but int() can't read them; 30 nines overflow the database.
+        self.login(self.doctor)
+        for value in ("²", "①", "1²", "abc", "9" * 30, "-1", "1.0"):
+            with self.subTest(patient=value):
+                self.assertEqual(self.client.get(self.url, {"patient": value}).status_code, 404)
+                response = self.client.post(f"{self.url}?patient={quote(value)}", {"message": "Hi", "action": "save"})
+                self.assertEqual(response.status_code, 404)
+        self.assertFalse(Reminder.objects.filter(clinic=self.clinic).exists())
 
     def test_send_now_creates_sends_and_audits(self):
         self.login(self.receptionist)

@@ -6,7 +6,8 @@ from unittest import mock
 
 from django.contrib.messages import get_messages
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -156,7 +157,7 @@ class ImportTests(ClinicTestCase):
             "Bad Age,F,,abc,0300-1234571,,,,,,,,",  # row 7
             f"Future Birthday,F,{tomorrow},,0300-1234572,,,,,,,,",  # row 8
             "Bad WhatsApp,F,,,0300-1234573,xyz,,,,,,,",  # row 9
-            "No Phone,F,,,,,,,,,,,",  # row 10
+            "No Phone,F,,,,,,,,,,,",  # row 10: fine, the mobile number is optional
         ))
         response = self.post(upload)
         self.assertEqual(response.status_code, 200)
@@ -165,8 +166,8 @@ class ImportTests(ClinicTestCase):
         self.assertContains(response, "Nothing was imported")
 
         problem_rows = [row for row, _ in response.context["errors"]]
-        self.assertEqual(problem_rows, [3, 4, 5, 6, 7, 8, 9, 10])
-        self.assertEqual(response.context["error_rows"], 8)
+        self.assertEqual(problem_rows, [3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(response.context["error_rows"], 7)
         for row in problem_rows:
             self.assertContains(response, f"Row {row}</td>")
         self.assertContains(response, "full_name is empty.")
@@ -174,7 +175,43 @@ class ImportTests(ClinicTestCase):
         self.assertContains(response, "is not a date")
         self.assertContains(response, "e.g. 0300-1234567")
         self.assertContains(response, "date_of_birth is in the future.")
-        self.assertContains(response, "phone is empty.")
+
+    def test_mobile_number_is_optional_but_must_be_real_if_given(self):
+        response = self.post(csv_upload(rows("No Phone,F,,,,,,,,,,,", "Bad Phone,M,,,0300-12,,,,,,,,")))
+        self.assertEqual(response.context["errors"], [(3, "phone “0300-12” is not a mobile number (e.g. 0300-1234567).")])
+        self.assertFalse(Patient.objects.exists())
+
+        self.assertEqual(self.post(csv_upload(rows("No Phone,F,,,,,,,,,,,"))).status_code, 302)
+        patient = Patient.objects.get()
+        self.assertEqual(patient.phone, "")
+        self.assertEqual(patient.whatsapp_number, "")
+        self.assertFalse(patient.can_receive_whatsapp)
+        self.assertNotIn("phone", importer.REQUIRED_COLUMNS)
+
+    def test_landlines_and_short_numbers_are_not_mobiles(self):
+        response = self.post(csv_upload(rows("Landline,F,,,042-35761234,,,,,,,,", "Short,M,,,0300-123456,,,,,,,,")))
+        self.assertEqual([row for row, _ in response.context["errors"]], [2, 3])  # row 1 is the header
+        self.assertFalse(Patient.objects.exists())
+
+    def test_urdu_digits_are_saved_as_0_to_9(self):
+        self.assertEqual(self.post(csv_upload(rows("Ali Raza,M,,,۰۳۰۰-۱۲۳۴۵۶۷,,,,,,,,"))).status_code, 302)
+        patient = Patient.objects.get()
+        self.assertEqual((patient.phone, patient.whatsapp_number), ("0300-1234567", "923001234567"))
+
+    def test_age_must_be_a_plain_whole_number(self):
+        """Regression: '²' passed isdigit() and then crashed int() with a server error."""
+        for age in ("²", "①", "4.5", "-3", "121", "0" * 5000):
+            with self.subTest(age=age[:10]):
+                response = self.post(csv_upload(rows(f"Ali Raza,M,,{age},0300-1234567,,,,,,,,")))
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "age must be a whole number from 0 to 120")
+        self.assertFalse(Patient.objects.exists())
+
+    def test_age_in_arabic_indic_digits_works(self):
+        self.assertEqual(self.post(csv_upload(rows("Ali Raza,M,,٤٢,0300-1234567,,,,,,,,"))).status_code, 302)
+        patient = Patient.objects.get()
+        self.assertEqual(patient.date_of_birth, years_before(timezone.localdate(), 42))
+        self.assertTrue(patient.dob_is_estimated)
 
     def test_mrn_must_be_unique_in_clinic_and_in_file(self):
         existing = self.make_patient(mrn="F-100")
@@ -205,6 +242,53 @@ class ImportTests(ClinicTestCase):
         self.assertEqual(Patient.objects.get(full_name="Sara Khan").mrn, "P-00051")
         # Patients added later never clash with imported numbers.
         self.assertEqual(self.make_patient(full_name="Later Patient").mrn, "P-00052")
+
+    def test_auto_mrns_continue_from_the_counter_and_skip_numbers_in_use(self):
+        self.make_patient(full_name="First Patient")  # P-00001 from the clinic's counter
+        self.make_patient(full_name="Hand Numbered", phone="0300-7777777", mrn="P-00003")  # counter stays at 1
+        upload = csv_upload(rows(
+            "Ali Raza,M,,,0300-1234567,,,,,,,,",
+            "Sara Khan,F,,,,0333 5556667,,,,,,,F-77",  # own, non-automatic number: kept, doesn't move the counter
+            "Omar Shah,M,,,0300-1234569,,,,,,,,",
+        ))
+        self.assertEqual(self.post(upload).status_code, 302)
+        mrns = dict(Patient.objects.values_list("full_name", "mrn"))
+        self.assertEqual(mrns["Ali Raza"], "P-00004")
+        self.assertEqual(mrns["Sara Khan"], "F-77")
+        self.assertEqual(mrns["Omar Shah"], "P-00005")
+
+        clinic = Clinic.objects.get(pk=self.clinic.pk)
+        self.assertEqual(clinic.patient_counter, 5)
+        self.assertEqual(clinic.allocate_mrn(), "P-00006")
+
+    def test_imported_patients_get_their_whatsapp_number_and_timestamps(self):
+        """The import saves in bulk (no Patient.save()), so it must still fill these in."""
+        upload = csv_upload(rows("Ali Raza,M,,,0300-1234567,,,,,,,,", "Sara Khan,F,,,0300-1234568,0333 5556667,,,,,,,"))
+        self.assertEqual(self.post(upload).status_code, 302)
+        numbers = dict(Patient.objects.values_list("full_name", "whatsapp_number"))
+        self.assertEqual(numbers, {"Ali Raza": "923001234567", "Sara Khan": "923335556667"})
+        for patient in Patient.objects.all():
+            self.assertIsNotNone(patient.created_at)
+            self.assertIsNotNone(patient.updated_at)
+            self.assertEqual(patient.created_by, self.owner)
+
+    def test_a_long_file_runs_a_fixed_number_of_queries(self):
+        """Regression: saving ran about 5 queries per patient, so a 5,000-row file hit the server timeout."""
+
+        def import_queries(count, first):
+            lines = [f"Patient {n},M,,,0300-{1000000 + n},,,,,,,," for n in range(first, first + count)]
+            with CaptureQueriesContext(connection) as queries:
+                response = self.post(csv_upload(rows(*lines)))
+            self.assertEqual(response.status_code, 302)
+            patient_inserts = [q for q in queries if q["sql"].startswith('INSERT INTO "patients_patient"')]
+            return len(queries) - len(patient_inserts), len(patient_inserts)
+
+        small_other, _ = import_queries(5, 0)
+        big_other, big_inserts = import_queries(600, 1000)
+        self.assertEqual(Patient.objects.count(), 605)
+        self.assertEqual(big_other, small_other, "only the number of INSERT batches may grow with the file")
+        # Batches of up to 500 rows (SQLite, used by the tests, fits about 45 patients per INSERT).
+        self.assertLess(big_inserts, 20)
 
     def test_blank_lines_are_skipped_but_row_numbers_match_the_spreadsheet(self):
         upload = csv_upload(rows("Ali Raza,M,,,0300-1234567,,,,,,,,", ",,,,,,,,,,,,", "", "Bad,Q,,,0300-1,,,,,,,,"))
@@ -260,3 +344,131 @@ class ImportTests(ClinicTestCase):
         self.post(csv_upload(rows("Ali Raza,M,,,0300-1234567,,,,,,,,")))
         self.assertEqual(Patient.objects.get().clinic, self.clinic)
         self.assertFalse(Patient.objects.filter(clinic=self.other_clinic).exists())
+
+
+class ImportDuplicateTests(ClinicTestCase):
+    """Rows that look like a patient who is already registered stop the import until staff choose."""
+
+    def setUp(self):
+        self.login(self.owner)
+
+    def post(self, upload, duplicates=""):
+        return self.client.post(IMPORT_URL, {"file": upload, "duplicates": duplicates})
+
+    def test_importing_the_same_file_twice_does_not_double_the_register(self):
+        text = rows("Ayesha Khan,F,1988-04-15,,0300-1234567,,,,,,,,", "Bilal Ahmed,M,,,0321 7654321,,,,,,,,")
+        self.assertEqual(self.post(csv_upload(text)).status_code, 302)
+        ayesha, bilal = Patient.objects.order_by("full_name")
+
+        response = self.post(csv_upload(text))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Patient.objects.count(), 2)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.IMPORT).count(), 1)
+        self.assertEqual(response.context["errors"], [])
+        self.assertEqual(
+            response.context["duplicates"],
+            [
+                (2, f"Ayesha Khan looks already registered as {ayesha.mrn} (same name and date of birth)."),
+                (3, f"Bilal Ahmed looks already registered as {bilal.mrn} (same name and mobile number)."),
+            ],
+        )
+        self.assertContains(response, "Nothing was imported yet")
+        self.assertContains(response, 'name="duplicates"')
+
+    def test_choice_is_only_offered_after_duplicates_were_found(self):
+        self.assertNotContains(self.client.get(IMPORT_URL), 'name="duplicates"')
+        response = self.post(csv_upload(rows("Bad,Q,,,0300-1234567,,,,,,,,")))
+        self.assertNotContains(response, 'name="duplicates"')
+
+    def test_same_patient_twice_in_one_file(self):
+        response = self.post(csv_upload(rows(
+            "Ayesha Khan,F,,,0300-1234567,,,,,,,,",
+            "Sara Khan,F,15/04/1990,,0300-1234568,,,,,,,,",
+            "ayesha  KHAN,F,,,+92 300 1234567,,,,,,,,",  # other case, spacing and number format
+            "SARA KHAN,F,1990-04-15,,,,,,,,,,",
+        )))
+        self.assertEqual(
+            response.context["duplicates"],
+            [
+                (4, "Same patient as row 2 (same name and mobile number)."),
+                (5, "Same patient as row 3 (same name and date of birth)."),
+            ],
+        )
+        self.assertFalse(Patient.objects.exists())
+
+    def test_patient_added_by_hand_then_imported_is_flagged(self):
+        existing = self.make_patient(full_name="Ayesha Khan", phone="0300-1234567", date_of_birth=None)
+        response = self.post(csv_upload(rows("AYESHA KHAN,F,,,03001234567,,,,,,,,")))
+        self.assertEqual(
+            response.context["duplicates"],
+            [(2, f"AYESHA KHAN looks already registered as {existing.mrn} (same name and mobile number).")],
+        )
+        self.assertEqual(Patient.objects.count(), 1)
+
+    def test_archived_and_other_clinics_patients_do_not_count(self):
+        self.make_patient(full_name="Ayesha Khan", phone="0300-1234567", is_archived=True)
+        make_patient(self.other_clinic, full_name="Ayesha Khan", phone="0300-1234567")
+        response = self.post(csv_upload(rows("Ayesha Khan,F,,,0300-1234567,,,,,,,,")))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Patient.objects.filter(clinic=self.clinic, is_archived=False).count(), 1)
+
+    def test_family_sharing_one_mobile_is_imported(self):
+        self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        response = self.post(csv_upload(rows(
+            "Imran Khan,M,,,0300-1234567,,,,,,,,",
+            "Zara Khan,F,,8,0300-1234567,,,,,,,,",
+        )))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Patient.objects.filter(whatsapp_number="923001234567").count(), 3)
+
+    def test_import_anyway(self):
+        self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        upload = rows("Ayesha Khan,F,,,0300-1234567,,,,,,,,", "Bilal Ahmed,M,,,0321 7654321,,,,,,,,")
+        response = self.post(csv_upload(upload), duplicates="import")
+        self.assertRedirects(response, f"{reverse('patients:list')}?sort=recent", fetch_redirect_response=False)
+        self.assertEqual(Patient.objects.filter(full_name="Ayesha Khan").count(), 2)
+        self.assertEqual(Patient.objects.count(), 3)
+        self.assertEqual([str(m) for m in get_messages(response.wsgi_request)], ["Imported 2 patients."])
+        log = AuditLog.objects.get(action=AuditLog.Action.IMPORT)
+        self.assertEqual(log.summary, "Imported 2 patients from CSV")
+
+    def test_skip_the_ones_already_registered(self):
+        existing = self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        upload = rows(
+            "Ayesha Khan,F,,,0300-1234567,,,,,,,,",
+            "Bilal Ahmed,M,,,0321 7654321,,,,,,,,",
+            "Bilal Ahmed,M,,,0321-7654321,,,,,,,,",  # same as the row above: the first one is kept
+        )
+        response = self.post(csv_upload(upload), duplicates="skip")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(list(Patient.objects.filter(full_name="Ayesha Khan")), [existing])
+        self.assertEqual(Patient.objects.filter(full_name="Bilal Ahmed").count(), 1)
+        self.assertEqual(
+            [str(m) for m in get_messages(response.wsgi_request)],
+            ["Imported 1 patient. Skipped 2 who were already registered."],
+        )
+        log = AuditLog.objects.get(action=AuditLog.Action.IMPORT)
+        self.assertEqual(log.summary, "Imported 1 patient from CSV, skipped 2 already registered")
+
+    def test_a_choice_never_skips_rows_that_need_fixing(self):
+        self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        upload = rows("Ayesha Khan,F,,,0300-1234567,,,,,,,,", "Bad Sex,X,,,0300-1234569,,,,,,,,")
+        for choice in ("skip", "import"):
+            with self.subTest(choice=choice):
+                response = self.post(csv_upload(upload), duplicates=choice)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual([row for row, _ in response.context["errors"]], [3])
+                self.assertEqual([row for row, _ in response.context["duplicates"]], [2])
+                self.assertContains(response, "Also check these patients")
+        self.assertEqual(Patient.objects.count(), 1)
+
+    def test_parser_reports_duplicates_apart_from_errors(self):
+        self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        result = importer.parse_patients_csv(
+            rows("Ayesha Khan,F,,,0300-1234567,,,,,,,,", "Bilal Ahmed,M,,,0321 7654321,,,,,,,,").encode(), self.clinic
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.errors, [])
+        self.assertEqual([row for row, _ in result.duplicates], [2])
+        self.assertEqual([p.full_name for p in result.patients], ["Ayesha Khan", "Bilal Ahmed"])
+        self.assertEqual([p.full_name for p in result.new_patients], ["Bilal Ahmed"])

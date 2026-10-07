@@ -1,4 +1,4 @@
-{% load core_tags appointment_tags %}
+{% load core_tags appointment_tags clinical_tags %}
 {% comment %}
 "History" tab (clinicians only): visits, lab results and past appointments without a visit, newest first.
 Expects: patient, timeline (see apps.patients.services.history_timeline), timeline_total, timeline_limit.
@@ -18,10 +18,18 @@ Expects: patient, timeline (see apps.patients.services.history_timeline), timeli
               </div>
               {% if visit.diagnosis %}<div><span class="muted">Diagnosis:</span> {{ visit.diagnosis }}</div>{% endif %}
               {% if entry.vitals %}<div class="muted small">{{ entry.vitals|join:" · " }}</div>{% endif %}
-              <div class="row timeline-links">
-                {% if visit.medicine_count %}
-                  <span class="badge badge-primary">{% include "includes/icon.html" with name="pill" size="sm" %}{{ visit.medicine_count }} medicine{{ visit.medicine_count|pluralize }}</span>
+              {% with items=visit.prescription_items.all %}{# prefetched by history_timeline() #}
+                {% if items %}
+                  <ul class="medicine-list" aria-label="Medicines prescribed">
+                    {% for item in items %}
+                      {% with details=item|rx_details %}
+                        <li>{% include "includes/icon.html" with name="pill" size="sm" %} <strong>{{ item.medicine }}</strong>{% if details %} <span class="muted">{{ details }}</span>{% endif %}</li>
+                      {% endwith %}
+                    {% endfor %}
+                  </ul>
                 {% endif %}
+              {% endwith %}
+              <div class="row timeline-links">
                 {% if visit.follow_up_date %}<span class="badge badge-info">Follow-up {{ visit.follow_up_date|date:"j M Y" }}</span>{% endif %}
                 <a href="{% url 'clinical:visit_detail' visit.pk %}">Open visit</a>
                 <a href="{% url 'clinical:prescription_print' visit.pk %}">{% include "includes/icon.html" with name="printer" size="sm" %} Print prescription</a>

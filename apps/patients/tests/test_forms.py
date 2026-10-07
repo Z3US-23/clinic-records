@@ -91,15 +91,40 @@ class PatientCreateTests(ClinicTestCase):
             response, f"{reverse('appointments:create')}?patient={patient.pk}", fetch_redirect_response=False
         )
 
-    def test_phone_is_required_and_validated(self):
+    def test_phone_is_optional_but_validated(self):
         self.login(self.doctor)
-        response = self.client.post(CREATE_URL, patient_data(phone=""))
-        self.assertFormError(response.context["form"], "phone", "This field is required.")
-
         response = self.client.post(CREATE_URL, patient_data(phone="12"))
         self.assertContains(response, "e.g. 0300-1234567")
-        self.assertIn("phone", response.context["form"].errors)
+        self.assertIn("doesn't look like a mobile number", response.context["form"].errors["phone"][0])
         self.assertFalse(Patient.objects.exists())
+
+        # Some patients have no mobile: they can still be registered, just without reminders.
+        response = self.client.post(CREATE_URL, patient_data(phone=""))
+        patient = Patient.objects.get()
+        self.assertRedirects(response, patient.get_absolute_url(), fetch_redirect_response=False)
+        self.assertEqual(patient.phone, "")
+        self.assertEqual(patient.whatsapp_number, "")
+        self.assertFalse(patient.can_receive_whatsapp)
+        self.assertContains(self.client.get(CREATE_URL), "Leave empty if the patient has no mobile.")
+
+    def test_mobile_number_must_be_a_real_mobile(self):
+        """WhatsApp links are only ever built for a full mobile number, never a landline or a short one."""
+        self.login(self.receptionist)
+        for bad in ("0300-123456", "042-35761234", "12345"):
+            with self.subTest(phone=bad):
+                response = self.client.post(CREATE_URL, patient_data(phone=bad))
+                self.assertIn("doesn't look like a mobile number", response.context["form"].errors["phone"][0])
+        self.assertFalse(Patient.objects.exists())
+
+        # The country code typed with the trunk 0 ("+92 0300...") still gives the right number.
+        self.client.post(CREATE_URL, patient_data(phone="+92 0300 1234567"))
+        self.assertEqual(Patient.objects.get().whatsapp_number, "923001234567")
+
+    def test_urdu_digits_are_saved_as_0_to_9(self):
+        self.login(self.receptionist)
+        self.client.post(CREATE_URL, patient_data(phone="۰۳۰۰-۱۲۳۴۵۶۷"))
+        patient = Patient.objects.get()
+        self.assertEqual((patient.phone, patient.whatsapp_number), ("0300-1234567", "923001234567"))
 
     def test_whatsapp_phone_validated(self):
         self.login(self.doctor)
@@ -220,6 +245,28 @@ class PatientUpdateTests(ClinicTestCase):
         log = AuditLog.objects.get(action=AuditLog.Action.UPDATE)
         self.assertEqual(log.summary, f"Updated patient {patient.mrn}")
 
+    def test_opening_the_edit_form_is_audited_without_clinical_details(self):
+        patient = self.make_patient(allergies="Penicillin", chronic_conditions="Diabetes")
+        self.login(self.doctor)
+        self.client.get(self.update_url(patient))
+        log = AuditLog.objects.get(action=AuditLog.Action.VIEW)
+        self.assertEqual(log.summary, f"Opened patient {patient.mrn} for editing")
+        self.assertEqual((log.object_type, log.object_id, log.user), ("Patient", str(patient.pk), self.doctor))
+        self.assertNotIn("Penicillin", log.summary)
+
+        # Shown again with an error: opened again, so logged again. A successful save: UPDATE only.
+        self.client.post(self.update_url(patient), patient_data(full_name=""))
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.VIEW).count(), 2)
+        self.client.post(self.update_url(patient), patient_data())
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.VIEW).count(), 2)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.UPDATE).count(), 1)
+
+    def test_another_clinics_patient_edit_form_is_404_and_not_audited(self):
+        other = make_patient(self.other_clinic)
+        self.login(self.doctor)
+        self.assertEqual(self.client.get(self.update_url(other)).status_code, 404)
+        self.assertFalse(AuditLog.objects.filter(action=AuditLog.Action.VIEW).exists())
+
     def test_editing_does_not_trigger_duplicate_check_against_itself(self):
         patient = self.make_patient(full_name="Ayesha Khan", date_of_birth=date(1988, 4, 15))
         self.make_patient(full_name="Sister", phone="0300-1234567")
@@ -239,6 +286,17 @@ class PatientUpdateTests(ClinicTestCase):
         self.assertEqual(patient.allergies, "Penicillin")
         self.assertEqual(patient.chronic_conditions, "Diabetes")
         self.assertEqual(patient.blood_group, "A+")
+
+    def test_patient_without_a_mobile_can_be_edited(self):
+        """Regression: the phone was required, so a patient with none could never be saved again."""
+        patient = self.make_patient(phone="")
+        self.login(self.doctor)
+        response = self.client.post(self.update_url(patient), patient_data(phone="", allergies="Penicillin"))
+        self.assertRedirects(response, patient.get_absolute_url(), fetch_redirect_response=False)
+        patient.refresh_from_db()
+        self.assertEqual(patient.allergies, "Penicillin")
+        self.assertEqual(patient.phone, "")
+        self.assertEqual(patient.whatsapp_number, "")
 
     def test_doctor_can_change_clinical_fields(self):
         patient = self.make_patient(allergies="Penicillin")

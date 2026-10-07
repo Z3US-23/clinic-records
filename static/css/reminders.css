@@ -56,6 +56,8 @@
 .rm-preview[open] summary::after { content: "Hide message"; }
 .rm-actions-cell { text-align: right; }
 .rm-actions { justify-content: flex-end; align-items: center; }
+/* Why a reminder can't be sent (shown instead of the WhatsApp button). */
+.rm-send-blocker { max-width: 30ch; line-height: 1.35; }
 
 @media (max-width: 860px) {
   /* Stacked rows: the message and the buttons get the full width. */
@@ -63,7 +65,7 @@
   .rm-table td.rm-actions-cell { display: block; max-width: none; text-align: left; }
   .rm-table td.rm-message-cell::before { display: block; margin-bottom: 4px; }
   .rm-actions { justify-content: flex-start; padding-top: 4px; }
-  .rm-actions .inline-form:first-child .btn-whatsapp { height: 40px; padding: 0 16px; }
+  .rm-actions .inline-form:first-child .btn-whatsapp { padding: 0 16px; }
 }
 
 /* ---------- New message: patient search ---------- */

@@ -1,0 +1,41 @@
+{% extends "base_public.html" %}
+{% block title %}Join {{ clinic.name }} · {{ PRODUCT_NAME }}{% endblock %}
+
+{% block content %}
+  <h1>Join {{ clinic.name }}</h1>
+  <p>
+    {{ clinic.name }}{% if clinic.city %}, {{ clinic.city }}{% endif %} has invited you to work with them on
+    {{ PRODUCT_NAME }} as <strong>{{ membership.get_role_display }}</strong>.
+  </p>
+  <p class="muted">
+    You are signed in as <strong>{{ user.email }}</strong>. Once you join, you can switch between your clinics
+    from the menu. Each clinic only ever sees its own patients.
+  </p>
+
+  {% if membership.invite_expired %}
+    <div class="alert alert-warning">
+      {% include "includes/icon.html" with name="alert" %}
+      <div>This link has expired. Please ask {{ clinic.name }} for a new one.</div>
+    </div>
+    <form method="post" class="mt-2">
+      {% csrf_token %}
+      <button type="submit" name="action" value="decline" class="btn btn-ghost btn-block">Remove this invitation</button>
+    </form>
+  {% else %}
+    <form method="post" class="form mt-2">
+      {% csrf_token %}
+      {% include "includes/form_fields.html" with form=form %}
+      <div class="stack-sm mt-2">
+        <button type="submit" name="action" value="accept" class="btn btn-primary btn-lg btn-block">
+          {% include "includes/icon.html" with name="check" %}Join {{ clinic.name }}
+        </button>
+        {# formnovalidate: saying no doesn't need the password #}
+        <button type="submit" name="action" value="decline" class="btn btn-ghost btn-block" formnovalidate
+                data-confirm="Decline the invitation from {{ clinic.name }}?">No thanks</button>
+      </div>
+    </form>
+  {% endif %}
+
+  <hr>
+  <p class="mb-0"><a href="{% url 'core:dashboard' %}">Not now, back to {{ PRODUCT_NAME }}</a></p>
+{% endblock %}

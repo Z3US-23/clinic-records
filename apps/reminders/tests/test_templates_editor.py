@@ -3,6 +3,7 @@
 from django.contrib.messages import get_messages
 from django.urls import reverse
 
+from apps.accounts.models import Clinic
 from apps.core.models import AuditLog
 from apps.reminders.models import MessageTemplate, ReminderKind
 from apps.reminders.services import DEFAULT_TEMPLATES, get_template_body
@@ -48,6 +49,14 @@ class TemplatesAccessTests(ReminderTestCase):
         MessageTemplate.objects.create(clinic=self.other_clinic, kind=ReminderKind.FOLLOW_UP, body="Other clinic words")
         self.login(self.owner)
         self.assertNotContains(self.client.get(URL), "Other clinic words")
+
+    def test_missed_follow_up_help_never_says_zero_days(self):
+        # A grace of 0 saved earlier still means "the day after" (see services.overdue_grace_days).
+        Clinic.objects.filter(pk=self.clinic.pk).update(overdue_grace_days=0)
+        self.login(self.owner)
+        response = self.client.get(URL)
+        self.assertContains(response, "Prepared when a follow-up is 1 day late")
+        self.assertNotContains(response, "0 days late")
 
 
 class TemplatesEditTests(ReminderTestCase):

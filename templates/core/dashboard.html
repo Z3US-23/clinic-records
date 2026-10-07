@@ -19,7 +19,12 @@
   <section class="card mb-3" aria-labelledby="onboarding-title">
     <div class="card-header">
       <h2 id="onboarding-title">Get your clinic ready</h2>
-      <span class="small muted">{{ onboarding_done }} of {{ onboarding_steps|length }} done</span>
+      <div class="row">
+        <span class="small muted">{{ onboarding_done }} of {{ onboarding_steps|length }} done</span>
+        <form method="post" action="{% url 'core:hide_setup_checklist' %}" class="inline-form">{% csrf_token %}
+          <button type="submit" class="btn btn-secondary btn-sm">Hide</button>
+        </form>
+      </div>
     </div>
     <ul class="checklist">
       {% for step in onboarding_steps %}
@@ -27,7 +32,7 @@
         <span class="check-mark" aria-hidden="true">{% include "includes/icon.html" with name="check" size="sm" %}</span>
         <div class="grow">
           <a class="title" href="{{ step.url }}">{{ step.label }}</a>{% if step.done %}<span class="visually-hidden"> (done)</span>{% endif %}
-          <div class="meta">{{ step.text }}</div>
+          <div class="meta">{{ step.text }}{% if step.extra_url %} <a href="{{ step.extra_url }}">{{ step.extra_label }}</a>{% endif %}</div>
         </div>
         {% if not step.done %}<a class="btn btn-secondary btn-sm" href="{{ step.url }}">Start</a>{% endif %}
       </li>
@@ -47,7 +52,7 @@
       <div class="stat-value">{{ stats.reminders_due }}</div>
       <div class="stat-note">WhatsApp messages ready</div>
     </a>
-    <a class="stat{% if stats.missed_follow_ups %} stat-danger{% endif %}" href="{% url 'reminders:list' %}?tab=due">
+    <a class="stat{% if stats.missed_follow_ups %} stat-danger{% endif %}" href="{% url 'core:missed_follow_ups' %}">
       <div class="stat-label">{% include "includes/icon.html" with name="alert" size="sm" %}Missed follow-ups</div>
       <div class="stat-value">{{ stats.missed_follow_ups }}</div>
       <div class="stat-note">Didn't come back when due</div>
@@ -62,6 +67,40 @@
   <div class="grid-sidebar">
     <div class="stack">
 
+      {% if asking_new_time %}
+      <section class="card" aria-labelledby="reschedule-title">
+        <div class="card-header">
+          <h2 id="reschedule-title">Asking for another time</h2>
+          <span class="badge badge-warning">{{ stats.reschedule_requests }}</span>
+        </div>
+        <ul class="list">
+          {% for appt in asking_new_time %}
+          <li class="list-item">
+            <div class="grow">
+              <a class="title" href="{% url 'patients:detail' appt.patient_id %}">{{ appt.patient.full_name }}</a>
+              <div class="meta">
+                Booked for {{ appt.day_label }}, {{ appt.scheduled_at|time:"g:i a" }}{% if appt.doctor_name %} · {{ appt.doctor_name }}{% endif %}{% if appt.patient_responded_at %} · <span class="nowrap">asked {{ appt.patient_responded_at|naturaltime }}</span>{% endif %}
+              </div>
+              {% if appt.patient_note %}<div class="small muted pre-line patient-note">“{{ appt.patient_note }}”</div>{% endif %}
+            </div>
+            <div class="btn-group">
+              <a class="btn btn-primary btn-sm" href="{% url 'appointments:update' appt.pk %}?next={{ request.path|urlencode }}">{% include "includes/icon.html" with name="calendar" size="sm" %}Change time</a>
+              {% with tel=appt.patient.phone|tel_href:current_clinic.country %}{% if tel %}
+                <a class="btn btn-secondary btn-sm" href="{{ tel }}">{% include "includes/icon.html" with name="phone" size="sm" %}Call</a>
+              {% endif %}{% endwith %}
+              {% if appt.patient.can_receive_whatsapp %}
+                <a class="btn btn-ghost btn-sm" href="{% url 'reminders:create' %}?patient={{ appt.patient_id }}">{% include "includes/icon.html" with name="whatsapp" size="sm" %}Message</a>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% if stats.reschedule_requests > asking_new_time|length %}
+          <div class="card-footer small muted">Showing the {{ asking_new_time|length }} soonest of {{ stats.reschedule_requests }}.</div>
+        {% endif %}
+      </section>
+      {% endif %}
+
       <section class="card" aria-labelledby="waiting-title">
         <div class="card-header">
           <h2 id="waiting-title">Waiting room</h2>
@@ -74,7 +113,7 @@
             <span class="token" title="Token number">{{ appt.token }}</span>
             <div class="grow">
               <a class="title" href="{% url 'patients:detail' appt.patient_id %}">{{ appt.patient.full_name }}</a>
-              <div class="meta">{{ appt.patient.mrn }} · booked for {{ appt.scheduled_at|time:"g:i a" }}{% if appt.doctor_name %} · {{ appt.doctor_name }}{% endif %}</div>
+              <div class="meta">{{ appt.patient.mrn }} · {% if appt.arrived_at %}here since {{ appt.arrived_at|time:"g:i a" }}{% else %}booked for {{ appt.scheduled_at|time:"g:i a" }}{% endif %}{% if appt.doctor_name %} · {{ appt.doctor_name }}{% endif %}</div>
             </div>
             {% if is_clinician %}
               <a class="btn btn-primary btn-sm" href="{% url 'clinical:visit_create' appt.patient_id %}?appointment={{ appt.pk }}">{% include "includes/icon.html" with name="clipboard" size="sm" %}Start visit</a>
@@ -83,7 +122,7 @@
           {% endfor %}
         </ul>
         {% else %}
-          <p class="card-empty">Nobody is waiting right now. When a patient arrives, mark them "Arrived" on the schedule.</p>
+          <p class="card-empty">Nobody is waiting right now. When a patient arrives, tap "Arrived" next to their name below.</p>
         {% endif %}
       </section>
 
@@ -95,7 +134,7 @@
         {% if appointments %}
         <div class="table-wrap">
           <table class="table table-stack">
-            <thead><tr><th>Time</th><th>Patient</th><th>Doctor</th><th>Status</th></tr></thead>
+            <thead><tr><th>Time</th><th>Patient</th><th>Doctor</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
             <tbody>
               {% for appt in appointments %}
               <tr>
@@ -106,6 +145,8 @@
                 </td>
                 <td data-label="Doctor">{{ appt.doctor_name|default:"Any doctor" }}</td>
                 <td data-label="Status"><span class="badge {{ appt.status|badge_class }}">{{ appt.status|status_label }}</span></td>
+                {# Quick status buttons (Arrived, Did not come, Cancel / Seen); they post back to this page. #}
+                <td data-label="" class="today-actions"><div class="btn-group">{% appointment_actions appt %}</div></td>
               </tr>
               {% endfor %}
             </tbody>

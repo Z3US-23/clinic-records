@@ -1,3 +1,6 @@
+from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
+
 from django import forms
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
@@ -30,6 +33,11 @@ VITAL_FIELDS = [
 PRESCRIPTION_PREFIX = "items"
 MAX_MEDICINES = 40
 
+# Temperature is stored in °C (the model allows 30–45 °C), but most doctors here measure in °F.
+# The form takes either: 30–45 °C is 86–113 °F, so a number can only be in one of the two ranges.
+CELSIUS_RANGE = (30, 45)
+FAHRENHEIT_RANGE = (86, 113)
+
 
 def date_input(**attrs):
     return forms.DateInput(attrs={"type": "date", **attrs}, format=ISO_DATE)
@@ -40,6 +48,22 @@ def date_input(**attrs):
 class VisitForm(forms.ModelForm):
     """Consultation notes, vitals, diagnosis and follow-up. Prescription rows are a separate formset."""
 
+    # The day part of Visit.visit_date: today for a new visit, or an earlier day when a visit is
+    # typed in from a paper file. save() turns it back into a date and time.
+    seen_on = forms.DateField(
+        label="Visit date",
+        required=False,
+        widget=date_input(**{"data-visit-date": True}),
+        help_text="Change only when entering an earlier visit, e.g. from a paper file.",
+    )
+    # Stored in °C, typed in °F or °C: see clean_temperature_c(). Two decimals so "98.65" is accepted.
+    temperature_c = forms.DecimalField(
+        label="Temperature (°F or °C)",
+        required=False,
+        max_digits=5,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"placeholder": "e.g. 101 or 38.3"}),
+    )
     # Not stored: a no-JavaScript way to set the follow-up date ("come back in 2 weeks").
     # With JavaScript, clinical.js fills the date box as soon as one is picked.
     follow_up_in = forms.ChoiceField(
@@ -86,11 +110,55 @@ class VisitForm(forms.ModelForm):
                 elif isinstance(validator, MaxValueValidator):
                     field.widget.attrs["max"] = validator.limit_value
             field.widget.attrs["inputmode"] = "decimal" if isinstance(field, forms.DecimalField) else "numeric"
+        # The temperature box takes °F as well, so the browser must allow up to 113.
+        self.fields["temperature_c"].widget.attrs["max"] = FAHRENHEIT_RANGE[1]
+
+        seen_on = self.fields["seen_on"]
+        seen_on.initial = self.saved_day
+        seen_on.widget.attrs["max"] = timezone.localdate().isoformat()
+
+    @property
+    def saved_day(self):
+        """The visit's day as saved (today for a new visit), in the clinic's timezone."""
+        return timezone.localdate(self.instance.visit_date)
 
     @property
     def visit_day(self):
-        """The visit's date in the clinic's timezone; follow-up quick picks count from here."""
-        return timezone.localdate(self.instance.visit_date)
+        """The visit's day: the "Visit date" box once the form is checked, otherwise the saved day.
+
+        Follow-up quick picks count from here, and the follow-up can't be before it.
+        """
+        chosen = getattr(self, "cleaned_data", {}).get("seen_on")
+        return chosen or self.saved_day
+
+    @property
+    def is_back_dated(self):
+        """True when the visit is on an earlier day than today (e.g. typed in from a paper file)."""
+        return self.visit_day < timezone.localdate()
+
+    def clean_seen_on(self):
+        day = self.cleaned_data.get("seen_on")
+        if day is None:
+            return self.saved_day  # left empty: the visit keeps its day
+        if day > timezone.localdate():
+            raise forms.ValidationError("The visit date can't be in the future.")
+        born = self.instance.patient.date_of_birth if self.instance.patient_id else None
+        if born and day < born:
+            raise forms.ValidationError("The visit date can't be before the patient's date of birth.")
+        return day
+
+    def clean_temperature_c(self):
+        """Accept °F or °C and return °C (the unit the visit stores), rounded like the model (0.1)."""
+        value = self.cleaned_data.get("temperature_c")
+        if value is None:
+            return None
+        if CELSIUS_RANGE[0] <= value <= CELSIUS_RANGE[1]:
+            celsius = value
+        elif FAHRENHEIT_RANGE[0] <= value <= FAHRENHEIT_RANGE[1]:
+            celsius = (value - 32) * 5 / 9
+        else:
+            raise forms.ValidationError("Enter the temperature in °F (e.g. 101.2) or °C (e.g. 38.4).")
+        return celsius.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
     def clean(self):
         cleaned = super().clean()
@@ -114,6 +182,23 @@ class VisitForm(forms.ModelForm):
         if follow_up and follow_up < self.visit_day:
             self.add_error("follow_up_date", "The follow-up date can't be before the visit.")
         return cleaned
+
+    def chosen_visit_datetime(self):
+        """Visit.visit_date with the "Visit date" box applied (call on a valid form).
+
+        Same day as saved: unchanged, so a new visit keeps "now" and an edit keeps its time.
+        Another day: that day at the same time of day, in the clinic's timezone. (The real time of
+        a visit typed in from paper isn't known; keeping one keeps visits in a stable order.)
+        """
+        day = self.cleaned_data.get("seen_on") or self.saved_day
+        if day == self.saved_day:
+            return self.instance.visit_date
+        time_of_day = timezone.localtime(self.instance.visit_date).time()
+        return timezone.make_aware(datetime.combine(day, time_of_day))
+
+    def save(self, commit=True):
+        self.instance.visit_date = self.chosen_visit_datetime()
+        return super().save(commit)
 
 
 class PrescriptionItemForm(forms.ModelForm):
@@ -153,6 +238,35 @@ class PrescriptionFormSet(BaseInlineFormSet):
         "too_many_forms": "A prescription can have at most %(num)d medicines.",
     }
 
+    def _construct_form(self, i, **kwargs):
+        form = super()._construct_form(i, **kwargs)
+        if self._is_stale(i, form):
+            # The row's medicine has been removed from the visit since the page was opened
+            # (in another tab, or Save was pressed twice), so its hidden id no longer exists.
+            # Django would reject the row with an error on that hidden field, which nobody can
+            # see or fix, and every new try would fail the same way. Accept the row instead:
+            # save_items() skips it. (Turning it into a new row would bring back a medicine
+            # that someone deliberately removed.)
+            form.fields[self.model._meta.pk.name] = forms.Field(required=False, widget=forms.HiddenInput)
+        return form
+
+    def _is_stale(self, index, form):
+        """An "existing" row whose medicine isn't on this visit (removed meanwhile, or tampered POST data)."""
+        return self.is_bound and index < self.initial_form_count() and form.instance.pk is None
+
+    @property
+    def stale_medicines(self):
+        """How many skipped stale rows still had a medicine on them (call after is_valid()).
+
+        The doctor should hear about these: a change typed into such a row is not saved.
+        """
+        count = 0
+        for index, form in enumerate(self.forms):
+            data = getattr(form, "cleaned_data", {})
+            if self._is_stale(index, form) and (data.get("medicine") or "").strip() and not data.get("DELETE"):
+                count += 1
+        return count
+
     def save_items(self, visit):
         """Save rows in on-screen order and return how many medicines were kept.
 
@@ -164,7 +278,7 @@ class PrescriptionFormSet(BaseInlineFormSet):
         """
         position = 0
         for index, form in enumerate(self.forms):
-            if index < self.initial_form_count() and form.instance.pk is None:
+            if self._is_stale(index, form):
                 continue
             data = getattr(form, "cleaned_data", {})
             medicine = (data.get("medicine") or "").strip()

@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 
-from apps.core.phone import normalize_phone
+from apps.core.phone import normalize_mobile, with_ascii_digits
 
 from .models import Patient
 from .services import find_possible_duplicates, phone_example
@@ -86,7 +86,7 @@ class PatientForm(forms.ModelForm):
 
         example = phone_example(clinic.country)
         self.fields["phone"].widget.attrs["placeholder"] = example
-        self.fields["phone"].help_text = f"e.g. {example}"
+        self.fields["phone"].help_text = f"e.g. {example}. Leave empty if the patient has no mobile."
         self.fields["whatsapp_phone"].widget.attrs["placeholder"] = example
         self.fields["sex"].choices = [("", "Choose…")] + list(Patient.Sex.choices)
         if self.instance.dob_is_estimated:
@@ -95,8 +95,9 @@ class PatientForm(forms.ModelForm):
     # --- Field checks ---------------------------------------------------------
 
     def _clean_phone_field(self, name):
-        value = (self.cleaned_data.get(name) or "").strip()
-        if value and not normalize_phone(value, self.clinic.country):
+        # Urdu / Hindi digits are saved as 0-9 (formatting kept), so search and tel: links work.
+        value = with_ascii_digits((self.cleaned_data.get(name) or "").strip())
+        if value and not normalize_mobile(value, self.clinic.country):
             raise forms.ValidationError(
                 f"This doesn't look like a mobile number. Please write it in full, "
                 f"e.g. {phone_example(self.clinic.country)}."
@@ -151,7 +152,7 @@ class PatientForm(forms.ModelForm):
     def _check_duplicates(self, cleaned):
         if self.errors:
             return  # fix the basic mistakes first
-        number = normalize_phone(cleaned.get("whatsapp_phone") or cleaned.get("phone"), self.clinic.country)
+        number = normalize_mobile(cleaned.get("whatsapp_phone") or cleaned.get("phone"), self.clinic.country)
         self.possible_duplicates = list(
             find_possible_duplicates(
                 self.clinic,
@@ -172,10 +173,24 @@ class PatientForm(forms.ModelForm):
 
 
 class PatientImportForm(forms.Form):
+    # What to do with rows that look like a patient who is already registered.
+    # The page only offers this after an upload found some; until then they stop the import.
+    SKIP_DUPLICATES = "skip"
+    IMPORT_DUPLICATES = "import"
+
     file = forms.FileField(
         label="CSV file",
         help_text="Saved from Excel or Google Sheets as “CSV UTF-8”. Up to 2 MB (about 5,000 patients).",
         widget=forms.FileInput(attrs={"accept": ".csv,text/csv"}),
+    )
+    duplicates = forms.ChoiceField(
+        label="Patients who look already registered",
+        choices=[
+            (SKIP_DUPLICATES, "Skip them and import only the new patients"),
+            (IMPORT_DUPLICATES, "These are different people: import them too"),
+        ],
+        required=False,
+        widget=forms.RadioSelect,
     )
 
     def clean_file(self):

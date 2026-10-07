@@ -15,9 +15,14 @@
     </div>
     <h1>{% if is_new %}New visit{% else %}Edit visit{% endif %}</h1>
     <p class="subtitle">
-      {% if is_new %}Today · {{ doctor_name }}{% else %}{{ visit.visit_date|date:"j M Y" }}, {{ visit.visit_date|time:"g:i a" }} · {{ doctor_name }}{% endif %}
+      {% if not is_new %}{{ visit.visit_date|date:"j M Y" }}, {{ visit.visit_date|time:"g:i a" }}{% elif form.is_back_dated %}{{ form.visit_day|date:"j M Y" }}{% else %}Today{% endif %} · {{ doctor_name }}
     </p>
   </div>
+  {% if previous_visit or recent_labs %}
+    <div class="page-actions history-jump">
+      <a class="btn btn-secondary btn-sm" href="#patient-history">{% include "includes/icon.html" with name="clipboard" size="sm" %}Patient history</a>
+    </div>
+  {% endif %}
 </div>
 
 {% include "includes/patient_banner.html" with patient=patient %}
@@ -26,7 +31,7 @@
   <div class="alert alert-warning">{% include "includes/icon.html" with name="alert" %}<div>This patient's record is archived.</div></div>
 {% endif %}
 {% if appointment %}
-  <div class="alert alert-info">{% include "includes/icon.html" with name="calendar" %}<div>For the appointment on {{ appointment.scheduled_at|date:"j M Y" }} at {{ appointment.scheduled_at|time:"g:i a" }}. It will be marked as <strong>Seen</strong> when you save.</div></div>
+  <div class="alert alert-info">{% include "includes/icon.html" with name="calendar" %}<div>For the appointment on {{ appointment.scheduled_at|date:"j M Y" }} ({{ appointment.scheduled_at|time:"g:i a" }}). It will be marked as <strong>Seen</strong> when you save (not if you change the visit date to an earlier day).</div></div>
 {% endif %}
 {% if copied_from %}
   <div class="alert alert-info">{% include "includes/icon.html" with name="repeat" %}<div>Medicines copied from the visit on {{ copied_from.visit_date|date:"j M Y" }}. Check doses before saving.</div></div>
@@ -38,10 +43,12 @@
 <div class="grid-sidebar">
   <form method="post" class="form" data-visit-form>
     {% csrf_token %}
+    {% if form_token %}<input type="hidden" name="form_token" value="{{ form_token }}">{% endif %}
 
     <section class="card">
       <div class="card-header"><h2>Presenting complaint &amp; history</h2></div>
       <div class="card-body stack">
+        <div class="visit-date">{% include "includes/field.html" with field=form.seen_on %}</div>
         {% include "includes/field.html" with field=form.chief_complaint %}
         {% include "includes/field.html" with field=form.history %}
         {% include "includes/field.html" with field=form.examination %}
@@ -129,12 +136,16 @@
     </div>
   </form>
 
-  <aside class="stack">
+  {% comment %}
+  History for the doctor while writing. Links here open in a new tab, so the notes typed on
+  this page are never lost (clinical.js also asks before leaving the page with unsaved notes).
+  {% endcomment %}
+  <aside class="stack" id="patient-history" aria-label="Patient history">
     {% if previous_visit %}
       <section class="card">
         <div class="card-header">
           <h2>Previous visit</h2>
-          <a class="btn btn-ghost btn-sm" href="{{ previous_visit.get_absolute_url }}">Open</a>
+          <a class="btn btn-ghost btn-sm" href="{{ previous_visit.get_absolute_url }}" target="_blank" rel="noopener">Open</a>
         </div>
         <div class="card-body stack-sm">
           <div class="muted small">{{ previous_visit.visit_date|date:"j M Y" }} · {{ previous_visit.doctor.full_name }}</div>
@@ -155,6 +166,41 @@
             {% endif %}
           {% endwith %}
         </div>
+        {% if older_visits %}
+          <div class="card-body history-older">
+            <h3 class="note-heading">Earlier visits</h3>
+            <ul class="history-list">
+              {% for past in older_visits %}
+                <li>
+                  <a href="{{ past.get_absolute_url }}" target="_blank" rel="noopener">{{ past.visit_date|date:"j M Y" }}</a> · {{ past.chief_complaint }}
+                  <div class="muted small">{{ past.diagnosis|default:"No diagnosis recorded" }}</div>
+                  {% with past_items=past.prescription_items.all %}
+                    {% if past_items %}<div class="small">{% for item in past_items %}{{ item.medicine }}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+                  {% endwith %}
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if recent_labs %}
+      <section class="card">
+        <div class="card-header"><h2>Recent lab results</h2></div>
+        <ul class="list">
+          {% for lab in recent_labs %}
+            <li class="list-item">
+              <div class="grow">
+                <div class="title">{{ lab.test_name }} {% if lab.is_abnormal %}<span class="badge badge-danger">Abnormal</span>{% endif %}</div>
+                <div class="meta">{{ lab.result_date|date:"j M Y" }}{% if lab.result_text %} · {{ lab.result_text|truncatechars:60 }}{% endif %}</div>
+              </div>
+              {% if lab.file %}
+                <a class="btn btn-ghost btn-sm" href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">Report</a>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
       </section>
     {% endif %}
 
@@ -171,6 +217,11 @@
         </div>
       </section>
     {% endif %}
+
+    <div class="btn-group">
+      <a class="btn btn-secondary btn-sm" href="{% url 'patients:detail' patient.pk %}?tab=history" target="_blank" rel="noopener">{% include "includes/icon.html" with name="clipboard" size="sm" %}Full history</a>
+      <a class="btn btn-secondary btn-sm" href="{% url 'patients:detail' patient.pk %}?tab=labs" target="_blank" rel="noopener">{% include "includes/icon.html" with name="flask" size="sm" %}Lab results</a>
+    </div>
   </aside>
 </div>
 {% endblock %}

@@ -8,9 +8,11 @@ Access rules (docs/ARCHITECTURE.md):
   * Archive is for doctors / owners; CSV import is for the owner.
 """
 
+import logging
+
 from django.contrib import messages
 from django.db import IntegrityError
-from django.db.models import F, Max, Min, Q
+from django.db.models import F, OuterRef, Subquery
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -21,6 +23,7 @@ from django.views.generic import ListView
 
 from apps.accounts.models import Membership
 from apps.appointments.models import Appointment
+from apps.clinical.models import Visit
 from apps.core.audit import Action, log_action
 from apps.core.phone import normalize_phone
 from apps.core.permissions import (
@@ -30,12 +33,15 @@ from apps.core.permissions import (
     clinic_required,
     is_clinician,
 )
+from apps.reminders import services as reminder_services
 from apps.reminders.models import Reminder
 
 from . import importer
 from .forms import PatientForm, PatientImportForm
 from .models import Patient
 from .services import age_sex_label, clinical_summary, history_timeline, search_patients
+
+logger = logging.getLogger(__name__)
 
 SEARCH_JSON_LIMIT = 8
 LIST_PAGE_SIZE = 25
@@ -66,16 +72,21 @@ class PatientListView(ClinicRequiredMixin, ListView):
         show_archived = self.request.GET.get("archived") == "1"
         patients = Patient.objects.filter(clinic=clinic, is_archived=show_archived)
         patients = search_patients(patients, self.request.GET.get("q", ""), clinic.country)
-        patients = patients.annotate(
-            last_visit=Max("visits__visit_date"),
-            next_appointment=Min(
-                "appointments__scheduled_at",
-                filter=Q(
-                    appointments__scheduled_at__gte=timezone.now(),
-                    appointments__status__in=Appointment.ACTIVE_STATUSES,
-                ),
-            ),
+        # One small lookup per patient row (subqueries), not a JOIN of visits x appointments
+        # with GROUP BY, which grows with every visit and booking a patient has.
+        last_visit = (
+            Visit.objects.filter(patient=OuterRef("pk")).order_by("-visit_date").values("visit_date")[:1]
         )
+        next_appointment = (
+            Appointment.objects.filter(
+                patient=OuterRef("pk"),
+                scheduled_at__gte=timezone.now(),
+                status__in=Appointment.ACTIVE_STATUSES,
+            )
+            .order_by("scheduled_at")
+            .values("scheduled_at")[:1]
+        )
+        patients = patients.annotate(last_visit=Subquery(last_visit), next_appointment=Subquery(next_appointment))
         return patients.order_by(*self.SORTS[self.get_sort()][1])
 
     def paginate_queryset(self, queryset, page_size):
@@ -169,11 +180,32 @@ class PatientUpdateView(PatientFormMixin, View):
     def get_patient(self):
         return get_object_or_404(Patient, pk=self.kwargs["pk"], clinic=self.request.clinic)
 
+    def render_form(self, form, patient):
+        # The edit form shows the patient's details (and, to clinicians, allergies and chronic
+        # conditions), so opening it is audited like opening the profile. A successful save
+        # redirects without coming here and is logged as UPDATE instead.
+        log_action(self.request, Action.VIEW, patient, f"Opened patient {patient.mrn} for editing")
+        return super().render_form(form, patient)
+
     def save(self, form):
         patient = form.save()
         log_action(self.request, Action.UPDATE, patient, f"Updated patient {patient.mrn}")
+        if "reminders_opt_in" in form.changed_data:
+            _refresh_reminders(patient)
         messages.success(self.request, "Patient details saved.")
         return patient
+
+
+def _refresh_reminders(patient):
+    """Keep the patient's WhatsApp reminders in step after opting in / out or archiving.
+
+    Runs after the patient is safely saved: a problem with reminders must never lose the
+    change (and the daily reminder job tidies up anyway), so errors are logged, not raised.
+    """
+    try:
+        reminder_services.refresh_for_patient(patient)
+    except Exception:
+        logger.exception("Could not refresh reminders for patient %s", patient.pk)
 
 
 # --- Profile (medical-history dashboard) ---------------------------------------------
@@ -260,6 +292,7 @@ def archive(request, pk):
     patient = get_object_or_404(Patient, pk=pk, clinic=request.clinic)
     patient.is_archived = not patient.is_archived
     patient.save(update_fields=["is_archived", "updated_at"])
+    _refresh_reminders(patient)
     if patient.is_archived:
         log_action(request, Action.UPDATE, patient, f"Archived patient {patient.mrn}")
         messages.success(request, f"{patient.full_name} archived. They no longer show in the patient list or search.")
@@ -283,6 +316,7 @@ def import_patients(request):
         "columns": [(name, required, help) for name, (required, help) in importer.COLUMNS.items()],
         "max_rows": importer.MAX_ROWS,
         "errors": [],
+        "duplicates": [],
     }
     if request.method == "POST" and form.is_valid():
         try:
@@ -290,25 +324,45 @@ def import_patients(request):
         except importer.ImportFileError as problem:
             form.add_error("file", str(problem))
         else:
-            if result.ok:
-                try:
-                    count = importer.save_imported_patients(request.clinic, result.patients)
-                except IntegrityError:
-                    # Someone saved a patient with one of these MR numbers while we were checking.
-                    # The import ran in one transaction, so nothing was saved.
-                    form.add_error(
-                        "file", "Some MR numbers were taken by another patient just now. Nothing was imported: "
-                        "please upload the file again."
-                    )
-                else:
-                    log_action(request, Action.IMPORT, None, f"Imported {count} patients from CSV")
-                    messages.success(request, f"Imported {count} patient{'' if count == 1 else 's'}.")
-                    return redirect(f"{reverse('patients:list')}?sort=recent")
+            choice = form.cleaned_data["duplicates"]  # "" until staff have seen the list and chosen
+            if result.errors or (result.duplicates and not choice):
+                context.update({
+                    "errors": result.errors[:IMPORT_ERRORS_SHOWN],
+                    "errors_total": len(result.errors),
+                    "error_rows": len({row for row, _ in result.errors}),
+                    "duplicates": result.duplicates[:IMPORT_ERRORS_SHOWN],
+                    "duplicates_total": len(result.duplicates),
+                })
             else:
-                context["errors"] = result.errors[:IMPORT_ERRORS_SHOWN]
-                context["errors_total"] = len(result.errors)
-                context["error_rows"] = len({row for row, _ in result.errors})
+                import_all = choice == PatientImportForm.IMPORT_DUPLICATES
+                patients = result.patients if import_all else result.new_patients
+                response = _save_import(request, form, patients, skipped=len(result.patients) - len(patients))
+                if response is not None:
+                    return response
     return render(request, "patients/patient_import.html", context)
+
+
+def _save_import(request, form, patients, skipped):
+    """Save the checked patients, then redirect to the list. Returns None (and explains on the form) on a clash."""
+    try:
+        count = importer.save_imported_patients(request.clinic, patients)
+    except IntegrityError:
+        # Someone saved a patient with one of these MR numbers while we were checking.
+        # The import ran in one transaction, so nothing was saved.
+        form.add_error(
+            "file", "Some MR numbers were taken by another patient just now. Nothing was imported: "
+            "please upload the file again."
+        )
+        return None
+    how_many = f"{count} patient{'' if count == 1 else 's'}"
+    summary = f"Imported {how_many} from CSV"
+    message = f"Imported {how_many}."
+    if skipped:
+        summary += f", skipped {skipped} already registered"
+        message += f" Skipped {skipped} who {'was' if skipped == 1 else 'were'} already registered."
+    log_action(request, Action.IMPORT, None, summary)
+    messages.success(request, message)
+    return redirect(f"{reverse('patients:list')}?sort=recent")
 
 
 @require_GET

@@ -36,3 +36,16 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.created_at:%Y-%m-%d %H:%M} {self.user} {self.action} {self.object_type} {self.object_id}"
+
+
+class SetupChecklist(models.Model):
+    """The "Get your clinic ready" card on a clinic owner's Today page. A row exists once the owner hides it."""
+
+    clinic = models.OneToOneField("accounts.Clinic", on_delete=models.CASCADE, related_name="setup_checklist")
+    hidden_at = models.DateTimeField(null=True, blank=True, help_text="When the owner hid the checklist")
+    hidden_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    def __str__(self):
+        return f"Setup checklist for {self.clinic}"

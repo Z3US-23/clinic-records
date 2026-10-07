@@ -2,7 +2,7 @@
 
 from django.urls import reverse
 
-from apps.accounts.models import Membership
+from apps.accounts.models import Membership, User
 from apps.core.models import AuditLog
 from apps.core.testing import make_clinic, make_user
 
@@ -27,6 +27,7 @@ class NoClinicTests(AccountsTestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "not part of a clinic")
+        self.assertContains(response, "open the join link")
         self.assertContains(response, reverse("accounts:logout"))
 
     def test_clinic_pages_send_deactivated_user_here(self):
@@ -56,6 +57,31 @@ class SwitchClinicTests(AccountsTestCase):
         # The next page is now in the other clinic
         response = self.client.get(reverse("accounts:profile"))
         self.assertEqual(response.context["current_clinic"], self.other_clinic)
+
+    def test_switching_is_audited_in_both_clinics(self):
+        self.login(self.doctor)
+        self.client.post(self.url(self.other_clinic))
+
+        left = AuditLog.objects.get(action=AuditLog.Action.LOGOUT, user=self.doctor)
+        self.assertEqual(left.clinic, self.clinic)
+        self.assertEqual(left.summary, "Switched to another clinic")
+        arrived = AuditLog.objects.get(action=AuditLog.Action.LOGIN, user=self.doctor, clinic=self.other_clinic)
+        self.assertEqual(arrived.summary, "Signed in (switched from another clinic)")
+        # Neither entry names the other clinic.
+        self.assertNotIn(self.other_clinic.name, left.summary)
+        self.assertNotIn(self.clinic.name, arrived.summary)
+
+    def test_switching_to_the_clinic_you_are_in_logs_nothing(self):
+        self.login(self.doctor)
+        self.client.post(self.url(self.clinic))
+        self.assertFalse(AuditLog.objects.filter(action=AuditLog.Action.LOGOUT).exists())
+
+    def test_refused_until_you_choose_your_own_password(self):
+        User.objects.filter(pk=self.doctor.pk).update(must_change_password=True)
+        self.login(self.doctor)
+        response = self.client.post(self.url(self.other_clinic))
+        self.assertRedirects(response, reverse("accounts:password_change"), fetch_redirect_response=False)
+        self.assertNotEqual(self.client.session.get("clinic_id"), self.other_clinic.pk)
 
     def test_cannot_switch_to_someone_elses_clinic(self):
         self.login(self.receptionist)

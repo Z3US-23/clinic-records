@@ -8,6 +8,7 @@ the variables on the hosting platform instead (never commit a real `.env`).
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from django.contrib.messages import constants as message_constants
@@ -92,6 +93,9 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.CurrentClinicMiddleware",
+    # After authentication and messages: sends people whose password was set by a clinic
+    # owner to "Change password" before anything else.
+    "apps.accounts.middleware.PasswordChangeRequiredMiddleware",
     "apps.core.middleware.PrivateCacheControlMiddleware",
 ]
 
@@ -140,8 +144,14 @@ LOGIN_URL = "accounts:login"
 LOGIN_REDIRECT_URL = "core:dashboard"
 LOGOUT_REDIRECT_URL = "accounts:login"
 
-# Failed-login lockout (see apps.accounts): attempts per email+IP before a cool-down.
+# Failed sign-in lockout (see apps/accounts/lockout.py). Three limits, each counted over
+# LOGIN_LOCKOUT_MINUTES; reaching any of them refuses those sign-ins for that long:
+#   LOGIN_MAX_ATTEMPTS            one email from one IP address (a typo-prone person, or a guesser)
+#   LOGIN_MAX_ATTEMPTS_PER_EMAIL  one email from any IP address (guessing from many addresses)
+#   LOGIN_MAX_ATTEMPTS_PER_IP     one IP address with any email ("password spraying")
 LOGIN_MAX_ATTEMPTS = int(env("LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_MAX_ATTEMPTS_PER_EMAIL = int(env("LOGIN_MAX_ATTEMPTS_PER_EMAIL", "20"))
+LOGIN_MAX_ATTEMPTS_PER_IP = int(env("LOGIN_MAX_ATTEMPTS_PER_IP", "30"))
 LOGIN_LOCKOUT_MINUTES = int(env("LOGIN_LOCKOUT_MINUTES", "15"))
 
 # A working day; the timer restarts on every request.
@@ -239,9 +249,44 @@ LOGGING = {
 
 PRODUCT_NAME = env("PRODUCT_NAME", "Clinic Records")
 
-# Public "Register your clinic" page. Turn off once you onboard clinics yourself.
-ALLOW_CLINIC_SIGNUP = env_bool("ALLOW_CLINIC_SIGNUP", True)
+# Public "Register your clinic" page. Off by default: turn it on for demo sites only.
+# A pilot with real patients onboards each clinic by hand.
+ALLOW_CLINIC_SIGNUP = env_bool("ALLOW_CLINIC_SIGNUP", False)
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _site_url(value, debug):
+    """SITE_URL: the public address patients' confirmation links point to.
+
+    Every appointment reminder stores the link inside its WhatsApp text, so a wrong address would
+    send patients to a dead page. Outside development it must be the real https:// address, with
+    no path, e.g. https://yourapp.onrender.com.
+    """
+    url = (value or "").strip().rstrip("/")
+    if not url:
+        if debug:
+            return "http://127.0.0.1:8000"
+        raise ImproperlyConfigured(
+            "Set SITE_URL to the app's public address, e.g. https://yourapp.onrender.com "
+            "(required when DJANGO_DEBUG is off)."
+        )
+    parts = urlsplit(url)
+    if not debug and (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.hostname in _LOCAL_HOSTS
+        or parts.path
+        or parts.query
+        or parts.fragment
+    ):
+        raise ImproperlyConfigured(
+            f"SITE_URL must be the public https:// address with no path, e.g. https://yourapp.onrender.com "
+            f"(it is {url!r})."
+        )
+    return url
+
 
 # Used to build absolute links (e.g. appointment confirmation links in WhatsApp
 # messages) when there is no incoming request, such as in scheduled jobs.
-SITE_URL = env("SITE_URL", "http://127.0.0.1:8000").rstrip("/")
+SITE_URL = _site_url(env("SITE_URL"), DEBUG)

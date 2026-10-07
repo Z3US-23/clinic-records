@@ -1,9 +1,10 @@
 {% comment %}
 One medicine row of the prescription formset. Also rendered inside a <template> as the
 "empty form" that clinical.js copies when "Add medicine" is pressed (__prefix__ -> row number).
+Errors on the hidden fields (row id, visit) are shown too, so a row can never fail invisibly.
 {% endcomment %}
 <div class="formset-row" data-formset-row>
-  {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+  {% for hidden in form.hidden_fields %}{{ hidden }}{% if hidden.errors %}<div class="rx-row-errors">{{ hidden.errors }}</div>{% endif %}{% endfor %}
   {% for field in form.visible_fields %}{% if field.name != "DELETE" %}
     <div class="field {% if field.errors %}has-error{% endif %}">
       <label for="{{ field.id_for_label }}">{{ field.label }}</label>

@@ -1,6 +1,8 @@
 {% load static clinical_tags %}<!doctype html>
 {% comment %}
-Standalone printable prescription (does not use base.html). Sized for A5 paper; also prints fine on A4.
+Standalone printable prescription (does not use base.html). A5 paper by default, or A4; for pads that
+already carry the clinic's letterhead, the app's letterhead is left off the paper and blank space is kept
+at the top. Chosen in the toolbar (see utils.prescription_print_options); the body classes drive clinical.css.
 data-theme="light" keeps the "paper" white even when the phone/computer is in dark mode.
 {% endcomment %}
 <html lang="en" data-theme="light">
@@ -13,11 +15,30 @@ data-theme="light" keeps the "paper" white even when the phone/computer is in da
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
   <link rel="stylesheet" href="{% static 'css/clinical.css' %}">
 </head>
-<body class="rx-body">
+<body class="rx-body rx-{{ options.paper }}{% if options.pad_space %} rx-preprinted rx-top-{{ options.pad_space }}{% endif %}">
   <div class="rx-toolbar no-print">
     <a class="btn btn-secondary" href="{{ visit.get_absolute_url }}">{% include "includes/icon.html" with name="chevron-left" %}Back to visit</a>
+    <form method="get" class="rx-options" data-print-options>
+      <label class="rx-option">
+        <span>Paper</span>
+        <select name="paper">
+          {% for value, label in paper_choices %}<option value="{{ value }}"{% if value == options.paper %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="rx-option">
+        <span>Letterhead</span>
+        <select name="pad">
+          <option value="0"{% if not options.pad_space %} selected{% endif %}>Print our letterhead</option>
+          {% for value, label in pad_choices %}<option value="{{ value }}"{% if value == options.pad_space %} selected{% endif %}>Pre-printed pad: leave {{ label }} blank</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn-secondary" data-print-options-apply>Apply</button>
+    </form>
     <button type="button" class="btn btn-primary" data-print hidden>{% include "includes/icon.html" with name="printer" %}Print</button>
   </div>
+  {% if options.pad_space %}
+    <p class="rx-pad-note no-print">The letterhead (faded below) is not printed: your pad already has it. {{ options.pad_space }} mm is left blank at the top.</p>
+  {% endif %}
 
   <article class="rx-sheet" aria-label="Prescription">
     <header class="rx-letterhead">
@@ -84,7 +105,11 @@ data-theme="light" keeps the "paper" white even when the phone/computer is in da
     {% endif %}
 
     <footer class="rx-footer">
-      <div class="pre-line rx-small">{{ clinic.prescription_footer }}</div>
+      <div class="stack-sm">
+        <div class="pre-line rx-small">{{ clinic.prescription_footer }}</div>
+        {# Names the patient on the last sheet too, so a loose second page can't be mixed up. #}
+        <div class="rx-small">{{ patient.full_name }} · {{ patient.mrn }} · {{ visit.visit_date|date:"j M Y" }}</div>
+      </div>
       <div class="rx-signature">
         Signature
         <div class="rx-small">{% if membership %}{{ membership.display_name }}{% else %}{{ visit.doctor.full_name }}{% endif %}</div>

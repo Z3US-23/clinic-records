@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% load static core_tags %}
+{% block title %}Missed follow-ups{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/core.css' %}">{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="breadcrumbs"><a href="{% url 'core:dashboard' %}">Today</a><span>/</span><span>Missed follow-ups</span></div>
+    <h1>Missed follow-ups</h1>
+    <p class="subtitle">Patients who didn't come back within {{ grace_days }} day{{ grace_days|pluralize }} of their follow-up date and haven't booked since. Most recent first.</p>
+  </div>
+</div>
+
+<section class="card" aria-label="Patients who missed a follow-up">
+  {% if page_obj %}
+  <div class="table-wrap">
+    <table class="table table-stack">
+      <thead><tr><th>Patient</th><th>Follow-up was due</th><th>WhatsApp</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+        {% for visit in page_obj %}
+        <tr>
+          <td data-label="Patient">
+            <a class="row-link" href="{% url 'patients:detail' visit.patient_id %}">{{ visit.patient.full_name }}</a>
+            <span class="small subtle">{{ visit.patient.mrn }}</span>
+          </td>
+          <td data-label="Was due" class="nowrap">{{ visit.follow_up_date|date:"j M Y" }} · <span class="text-danger">{{ visit.days_late }} day{{ visit.days_late|pluralize }} late</span></td>
+          <td data-label="WhatsApp"><span class="badge {{ visit.message_badge }}">{{ visit.message_text }}</span></td>
+          <td data-label="">
+            <div class="btn-group">
+              {% with tel=visit.patient.phone|tel_href:current_clinic.country %}{% if tel %}
+                <a class="btn btn-secondary btn-sm" href="{{ tel }}">{% include "includes/icon.html" with name="phone" size="sm" %}Call</a>
+              {% endif %}{% endwith %}
+              <a class="btn btn-primary btn-sm" href="{% url 'appointments:create' %}?patient={{ visit.patient_id }}">{% include "includes/icon.html" with name="calendar-plus" size="sm" %}Book follow-up</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "includes/pagination.html" %}
+  {% else %}
+    {% include "includes/empty_state.html" with icon="check" title="Nobody has missed a follow-up" text="Patients appear here when their follow-up date has passed and they haven't come back or booked." %}
+  {% endif %}
+</section>
+<p class="small muted mt-2">Follow-ups more than {{ window_days }} days late drop off this list. Patients who booked, came back or were archived leave it straight away.</p>
+{% endblock %}

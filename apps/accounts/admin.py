@@ -9,7 +9,11 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import AdminUserCreationForm as BaseAdminUserCreationForm
 from django.contrib.auth.forms import UserChangeForm as BaseUserChangeForm
 
+from .forms import LockoutAdminAuthenticationForm
 from .models import Clinic, Membership, User
+
+# The admin's sign-in page gets the same failed-sign-in lockout as the app's own.
+admin.site.login_form = LockoutAdminAuthenticationForm
 
 
 class AdminUserCreationForm(BaseAdminUserCreationForm):
@@ -51,7 +55,7 @@ class UserAdmin(BaseUserAdmin):
     inlines = [UserMembershipInline]
 
     fieldsets = (
-        (None, {"fields": ("email", "password")}),
+        (None, {"fields": ("email", "password", "must_change_password")}),
         ("Personal info", {"fields": ("full_name",)}),
         (
             "Platform permissions",
@@ -100,14 +104,25 @@ class ClinicAdmin(admin.ModelAdmin):
                 )
             },
         ),
-        ("Printed prescriptions", {"fields": ("prescription_header", "prescription_footer")}),
+        (
+            "Printed prescriptions",
+            {
+                "fields": (
+                    "prescription_header",
+                    "prescription_footer",
+                    "prescription_paper",
+                    "prescription_pad_space",
+                )
+            },
+        ),
         ("Records", {"fields": ("patient_counter", "created_at")}),
     )
 
 
 @admin.register(Membership)
 class MembershipAdmin(admin.ModelAdmin):
-    list_display = ("user", "clinic", "role", "title", "is_active", "created_at")
+    list_display = ("user", "clinic", "role", "title", "is_active", "accepted_at", "created_at")
+    readonly_fields = ("invited_at",)
     list_filter = ("role", "is_active")
     search_fields = ("user__email", "user__full_name", "clinic__name")
     autocomplete_fields = ["user", "clinic"]

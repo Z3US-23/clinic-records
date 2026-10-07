@@ -34,7 +34,7 @@
               <tr>
                 <td data-label="Name">
                   <div class="staff-person">
-                    <span class="avatar avatar-sm">{{ m.user.full_name|initials }}</span>
+                    <span class="avatar avatar-sm">{{ m.display_name|initials }}</span>
                     <span>
                       <strong>{{ m.display_name }}</strong>
                       {% if m.pk == current_membership.pk %}<span class="badge badge-muted">You</span>{% endif %}
@@ -45,13 +45,21 @@
                 <td data-label="Role"><span class="badge {{ m.role|badge_class }}">{{ m.get_role_display }}</span></td>
                 <td data-label="Qualifications">{{ m.qualifications|default:"—" }}</td>
                 <td data-label="Access">
-                  {% if m.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}
+                  {% if m.is_pending %}<span class="badge badge-warning">Waiting for them to accept</span>
+                  {% elif m.is_active %}<span class="badge badge-success">Active</span>
+                  {% else %}<span class="badge badge-muted">Inactive</span>{% endif %}
                 </td>
                 <td data-label="Last sign-in" class="nowrap">
-                  {% if m.user.last_login %}{{ m.user.last_login|date:"j M Y" }}{% else %}<span class="subtle">Never</span>{% endif %}
+                  {% if m.is_pending %}<span class="subtle">—</span>{# their account isn't this clinic's to see yet #}
+                  {% elif m.user.last_login %}{{ m.user.last_login|date:"j M Y" }}
+                  {% else %}<span class="subtle">Never</span>{% endif %}
                 </td>
                 <td data-label="" class="text-right nowrap">
-                  <a class="btn btn-secondary btn-sm" href="{% url 'accounts:staff_edit' m.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                  {% if m.is_pending %}
+                    <a class="btn btn-secondary btn-sm" href="{% url 'accounts:staff_edit' m.pk %}">{% include "includes/icon.html" with name="link" size="sm" %}Join link</a>
+                  {% else %}
+                    <a class="btn btn-secondary btn-sm" href="{% url 'accounts:staff_edit' m.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                  {% endif %}
                 </td>
               </tr>
             {% endfor %}

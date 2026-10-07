@@ -5,6 +5,7 @@ import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils.html import strip_tags
 
 from apps.accounts.models import Membership
 from apps.clinical.models import LabResult, PrescriptionItem
@@ -63,6 +64,14 @@ class ClinicalTestCase(ClinicTestCase):
             PrescriptionItem.objects.create(visit=visit, medicine=name, dose="1 tablet", frequency="1+0+1", order=i)
             for i, name in enumerate(medicines)
         ]
+
+    def assert_allergy_banner(self, response, text):
+        """The red allergy banner (includes/patient_banner.html) shows `text`, whatever markup it uses inside."""
+        html = response.content.decode()
+        self.assertIn('class="allergy-banner"', html)
+        start = html.index('class="allergy-banner"')
+        banner = html[html.index(">", start) + 1 : html.index("</div>", start)]
+        self.assertIn(text, " ".join(strip_tags(banner).split()))
 
     def audit_exists(self, action, obj, summary, user=None):
         return AuditLog.objects.filter(

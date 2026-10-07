@@ -119,6 +119,7 @@
                 {% if lab.file %}
                   <a class="btn btn-secondary btn-sm" href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="file" size="sm" %}Open report</a>
                 {% endif %}
+                <a class="btn btn-ghost btn-sm" href="{% url 'clinical:lab_update' lab.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
                 <form method="post" action="{% url 'clinical:lab_delete' lab.pk %}" class="inline-form" data-confirm="Delete this lab result{% if lab.file %} and its file{% endif %}? This can't be undone.">
                   {% csrf_token %}
                   <button type="submit" class="btn btn-ghost btn-sm" aria-label="Delete lab result {{ lab.test_name }}">{% include "includes/icon.html" with name="trash" size="sm" %}</button>

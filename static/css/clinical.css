@@ -28,10 +28,20 @@
 .quick-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .quick-pick:hover { border-color: var(--border-strong); color: var(--text); }
 .quick-pick:has(input:checked) { background: var(--primary-soft); border-color: transparent; color: var(--primary-text); }
-.quick-pick:has(input:focus-visible) { box-shadow: var(--focus); }
+.quick-pick:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
 
-/* Previous visit card: short medicine list */
+/* Visit form: "Visit date" (only changed for visits typed in from paper files) */
+.visit-date { max-width: 360px; }
+
+/* Visit form: history column (previous visit in full, then earlier ones in short) */
 .rx-mini { margin: 0; padding-left: 1.1em; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; }
+.history-older { border-top: 1px solid var(--border); }
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 0.9rem; }
+/* On one-column layouts the history sits below the whole form: a link at the top jumps to it. */
+.history-jump { display: none; }
+@media (max-width: 1100px) {
+  .history-jump { display: flex; }
+}
 
 /* ---------- Visit detail ---------- */
 .vitals-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -53,19 +63,29 @@
   .visit-filters .filter-date input { min-width: 0; }
 }
 
-/* ---------- Printable prescription (A5) ---------- */
-@page prescription { size: A5; margin: 10mm; }
+/* ---------- Printable prescription ----------
+   Classes on <body>: rx-a5 (default) or rx-a4 picks the paper. rx-preprinted is for pads that already
+   carry the clinic's letterhead: the app's letterhead is left off the paper and rx-top-NN keeps NN mm
+   blank at the top for the printed header. */
+@page rx-a5 { size: A5; margin: 10mm; }
+@page rx-a4 { size: A4; margin: 12mm; }
 
 .rx-body { background: var(--surface-3); color: #111; }
-.rx-toolbar { max-width: 148mm; margin: 16px auto 0; display: flex; justify-content: space-between; gap: 8px; }
+.rx-toolbar { max-width: 148mm; margin: 16px auto 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.rx-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rx-option { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); }
+.rx-option select { width: auto; max-width: 100%; }
+.rx-pad-note { max-width: 148mm; margin: 10px auto 0; font-size: 0.85rem; color: var(--text-muted); }
+.rx-a4 .rx-toolbar, .rx-a4 .rx-pad-note { max-width: 210mm; }
 .rx-sheet {
-  page: prescription;
+  page: rx-a5;
   width: 148mm; min-height: 210mm; margin: 12px auto 32px; padding: 11mm 10mm;
   background: #fff; color: #111; box-shadow: var(--shadow-lg);
   display: flex; flex-direction: column; gap: 8px;
   font-size: 10.5pt; line-height: 1.45;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
+.rx-a4 .rx-sheet { page: rx-a4; width: 210mm; min-height: 297mm; padding: 14mm; font-size: 11pt; }
 .rx-sheet p { margin: 0; }
 .rx-small { font-size: 8.5pt; color: #444; }
 .rx-label { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; color: #555; font-weight: 600; }
@@ -74,6 +94,8 @@
 .rx-clinic-name { font-size: 15pt; font-weight: 750; color: #0b5c55; line-height: 1.2; }
 .rx-doctor { text-align: right; }
 .rx-doctor-name { font-weight: 700; font-size: 11pt; }
+/* Pre-printed pad: on screen the letterhead stays, faded, so the page still makes sense; it is not printed. */
+.rx-preprinted .rx-letterhead { opacity: 0.4; }
 
 .rx-patient { display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 6px 0; border-bottom: 1px solid #ccc; }
 .rx-allergies { color: #a12a21; border: 1px solid #e3a59f; border-radius: 4px; padding: 3px 8px; }
@@ -88,12 +110,24 @@
 .rx-footer { margin-top: auto; padding-top: 18px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
 .rx-signature { min-width: 48mm; border-top: 1px solid #333; padding-top: 4px; text-align: center; font-size: 9pt; }
 
+/* Narrow screens: the sheet fits the screen instead of its paper width (A4 is wider, so it gives way sooner). */
+@media (max-width: 840px) {
+  .rx-a4 .rx-toolbar, .rx-a4 .rx-pad-note { margin-left: 12px; margin-right: 12px; }
+  .rx-a4 .rx-sheet { width: auto; min-height: 0; margin: 12px; padding: 18px 16px; }
+}
 @media (max-width: 600px) {
-  .rx-toolbar { margin: 12px 12px 0; }
+  .rx-toolbar, .rx-pad-note { margin-left: 12px; margin-right: 12px; }
   .rx-sheet { width: auto; min-height: 0; margin: 12px; padding: 18px 16px; }
 }
 
 @media print {
   .rx-body { background: #fff; }
-  .rx-sheet { width: auto; min-height: 188mm; margin: 0; padding: 0; box-shadow: none; }
+  /* Fill the printable area: A5 is 210 mm tall less 2 x 10 mm margins, A4 297 mm less 2 x 12 mm. */
+  .rx-sheet, .rx-a4 .rx-sheet { width: auto; min-height: 188mm; margin: 0; padding: 0; box-shadow: none; }
+  .rx-a4 .rx-sheet { min-height: 270mm; }
+  .rx-preprinted .rx-letterhead { display: none; }
+  .rx-top-30 .rx-sheet { padding-top: 30mm; }
+  .rx-top-40 .rx-sheet { padding-top: 40mm; }
+  .rx-top-50 .rx-sheet { padding-top: 50mm; }
+  .rx-top-60 .rx-sheet { padding-top: 60mm; }
 }

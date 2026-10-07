@@ -42,6 +42,8 @@
 /* ---------- History timeline ---------- */
 .timeline-links { margin-top: 8px; gap: 6px 14px; font-size: 0.88rem; }
 .timeline-card > * + * { margin-top: 4px; }
+.timeline-card .medicine-list { margin-bottom: 0; }
+.timeline-card .medicine-list .icon { vertical-align: -2px; color: var(--text-muted); }
 
 /* ---------- Tabs content ---------- */
 .lab-result-cell { max-width: 420px; }
@@ -53,6 +55,10 @@
 /* ---------- CSV import ---------- */
 .import-steps { margin: 0 0 16px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 .import-errors .card-header h2 { display: flex; align-items: center; gap: 8px; }
+.duplicate-choice { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); padding: 12px 14px; }
+.duplicate-choice legend { float: left; width: 100%; }  /* inside the box, not on its border */
+.duplicate-choice legend + * { clear: both; }
+.duplicate-choice .field-check { font-weight: 500; cursor: pointer; }
 
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

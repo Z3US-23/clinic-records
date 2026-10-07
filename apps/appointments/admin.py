@@ -14,9 +14,9 @@ class AppointmentAdmin(admin.ModelAdmin):
     date_hierarchy = "scheduled_at"
     ordering = ("-scheduled_at",)
     raw_id_fields = ("patient", "doctor", "created_by")
-    readonly_fields = ("confirm_token", "patient_responded_at", "created_at", "updated_at")
+    readonly_fields = ("confirm_token", "patient_responded_at", "arrived_at", "created_at", "updated_at")
     fieldsets = (
         (None, {"fields": ("clinic", "patient", "doctor", "scheduled_at", "duration_minutes", "reason", "status")}),
         ("Patient's answer", {"fields": ("confirm_token", "patient_responded_at", "patient_note")}),
-        ("Record", {"fields": ("created_by", "created_at", "updated_at")}),
+        ("Record", {"fields": ("created_by", "created_at", "arrived_at", "updated_at")}),
     )

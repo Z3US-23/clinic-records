@@ -12,6 +12,7 @@ from .base import AccountsTestCase
 SIGNUP_URL = reverse("accounts:signup")
 
 
+@override_settings(ALLOW_CLINIC_SIGNUP=True)  # closed by default; open on demo sites
 class SignupTests(AccountsTestCase):
     def form_data(self, **overrides):
         data = {

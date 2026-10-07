@@ -1,6 +1,8 @@
 """Forms for signing in, registering a clinic, managing staff and clinic settings."""
 
 from django import forms
+from django.conf import settings
+from django.contrib.admin.forms import AdminAuthenticationForm
 from django.contrib.auth import password_validation
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, SetPasswordForm
 from django.core.exceptions import ValidationError
@@ -73,19 +75,22 @@ def check_phone(form, field_name, country):
 # --- Signing in ---------------------------------------------------------------
 
 
-class EmailAuthenticationForm(AuthenticationForm):
-    """Sign in with email + password, with a lock after too many wrong passwords."""
-
-    username = forms.EmailField(
-        label="Email",
-        widget=forms.EmailInput(attrs={"autofocus": True, "autocomplete": "username"}),
+def locked_error(minutes):
+    """The error shown while sign-ins for an email/address are locked (see lockout.py)."""
+    return ValidationError(
+        "Too many failed attempts. Please wait %(minutes)s and try again.",
+        code="locked",
+        params={"minutes": f"{minutes} minute{'s' if minutes != 1 else ''}"},
     )
 
-    error_messages = {
-        "invalid_login": "That email and password don't match. Please check them and try again.",
-        "inactive": "This account has been switched off. Please contact your clinic owner.",
-        "locked": "Too many failed attempts. Please wait %(minutes)s and try again.",
-    }
+
+class LoginLockoutMixin:
+    """Refuse sign-in after too many wrong passwords (see apps.accounts.lockout).
+
+    Put it BEFORE the Django form class (class MyForm(LoginLockoutMixin, AuthenticationForm))
+    so that its clean() wraps the password check. Both sign-in pages use it and share the
+    same counters, so failures on either page count towards the same lock.
+    """
 
     def clean_username(self):
         return self.cleaned_data["username"].strip().lower()
@@ -98,11 +103,7 @@ class EmailAuthenticationForm(AuthenticationForm):
             minutes = lockout.minutes_locked(email, ip)
             if minutes:
                 # Locked: refuse without checking the password at all.
-                raise ValidationError(
-                    self.error_messages["locked"],
-                    code="locked",
-                    params={"minutes": f"{minutes} minute{'s' if minutes != 1 else ''}"},
-                )
+                raise locked_error(minutes)
 
         try:
             cleaned_data = super().clean()  # calls authenticate()
@@ -114,6 +115,27 @@ class EmailAuthenticationForm(AuthenticationForm):
         if email and self.user_cache is not None:
             lockout.clear(email, ip)
         return cleaned_data
+
+
+class EmailAuthenticationForm(LoginLockoutMixin, AuthenticationForm):
+    """The app's sign-in page: email + password."""
+
+    username = forms.EmailField(
+        label="Email",
+        widget=forms.EmailInput(attrs={"autofocus": True, "autocomplete": "username"}),
+    )
+
+    error_messages = {
+        "invalid_login": "That email and password don't match. Please check them and try again.",
+        "inactive": "This account has been switched off. Please contact your clinic owner.",
+    }
+
+
+class LockoutAdminAuthenticationForm(LoginLockoutMixin, AdminAuthenticationForm):
+    """The Django admin's sign-in page, with the same lockout as the app's own sign-in page.
+
+    Platform admins can read every clinic's records, so their password needs this most.
+    """
 
 
 class ChangePasswordForm(PasswordChangeForm):
@@ -241,7 +263,14 @@ STAFF_HELP = {
 
 
 class StaffAddForm(forms.Form):
-    """Add a person to the clinic, creating their account if they don't have one yet."""
+    """Add a person to the clinic.
+
+    * A new email gets a new account with the password typed here. The owner knows that
+      password, so the person must choose their own when they first sign in.
+    * An email that already has an account (they work at another clinic) gets an
+      invitation instead: they join only after accepting it themselves (see Membership).
+      Nothing about the existing account (its name, its password) is shown or changed.
+    """
 
     full_name = forms.CharField(label="Full name", max_length=150)
     email = forms.EmailField(help_text="They will sign in with this email.")
@@ -258,7 +287,7 @@ class StaffAddForm(forms.Form):
         self.existing_user = None
         super().__init__(*args, **kwargs)
         self.fields["password1"].help_text = (
-            password_help_text() + " Not needed if they already use this app at another clinic."
+            password_help_text() + f" Not needed if they already use {settings.PRODUCT_NAME} at another clinic."
         )
 
     def clean_email(self):
@@ -266,9 +295,16 @@ class StaffAddForm(forms.Form):
         self.existing_user = User.objects.filter(email__iexact=email).first()
         if self.existing_user is not None:
             membership = Membership.objects.filter(user=self.existing_user, clinic=self.clinic).first()
-            if membership is not None:
-                if membership.is_active:
-                    raise ValidationError(f"{self.existing_user} is already on your staff list.")
+            if membership is None:
+                pass  # they will get an invitation
+            elif membership.is_pending:
+                # Not a member yet: name them only by the email the owner typed.
+                raise ValidationError(
+                    f"You have already invited {email}. Open their row on the staff list to see the join link."
+                )
+            elif membership.is_active:
+                raise ValidationError(f"{self.existing_user} is already on your staff list.")
+            else:
                 raise ValidationError(
                     f"{self.existing_user} is already on your staff list but switched off. "
                     "Open their details from the staff list to switch them back on."
@@ -288,17 +324,22 @@ class StaffAddForm(forms.Form):
         return cleaned_data
 
     def save(self):
-        """Returns (membership, created_new_account)."""
+        """Returns (membership, created_new_account).
+
+        With an existing account the membership is a waiting invitation (no access yet).
+        """
         data = self.cleaned_data
         with transaction.atomic():
             user = self.existing_user
             created = user is None
             if created:
                 user = User.objects.create_user(
-                    email=data["email"], password=data["password1"], full_name=data["full_name"]
+                    email=data["email"],
+                    password=data["password1"],
+                    full_name=data["full_name"],
+                    must_change_password=True,  # the owner knows this password
                 )
-            # An existing account keeps its own name and password.
-            membership = Membership.objects.create(
+            membership = Membership(
                 user=user,
                 clinic=self.clinic,
                 role=data["role"],
@@ -306,6 +347,11 @@ class StaffAddForm(forms.Form):
                 qualifications=data["qualifications"],
                 registration_number=data["registration_number"],
             )
+            if created:
+                membership.save()
+            else:
+                # An existing account keeps its own name and password, and joins only by accepting.
+                membership.start_invitation()
         return membership, created
 
 
@@ -317,6 +363,12 @@ class StaffEditForm(forms.ModelForm):
         fields = ["role", "title", "qualifications", "registration_number", "is_active"]
         labels = STAFF_LABELS
         help_texts = STAFF_HELP
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.is_pending:
+            # Access starts only when they accept the invitation themselves.
+            del self.fields["is_active"]
 
     def clean(self):
         cleaned_data = super().clean()
@@ -339,6 +391,40 @@ class StaffEditForm(forms.ModelForm):
         return cleaned_data
 
 
+# --- Joining another clinic (accepting an invitation) -----------------------
+
+
+class AcceptInvitationForm(forms.Form):
+    """Accepting an invitation opens another clinic's records, so confirm it's really you.
+
+    Wrong passwords count towards the sign-in lockout, so this page can't be used to guess one.
+    """
+
+    password = forms.CharField(
+        label="Your password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password", "autofocus": True}),
+        help_text="The password you already use to sign in.",
+    )
+
+    def __init__(self, *args, request, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+
+    def clean_password(self):
+        user = self.request.user
+        ip = get_client_ip(self.request)
+        minutes = lockout.minutes_locked(user.email, ip)
+        if minutes:
+            raise locked_error(minutes)
+
+        password = self.cleaned_data["password"]
+        if not user.check_password(password):
+            lockout.record_failure(user.email, ip)
+            raise ValidationError("That isn't your password. Please try again.", code="wrong_password")
+        return password
+
+
 # --- Clinic settings --------------------------------------------------------
 
 
@@ -357,9 +443,12 @@ class ClinicSettingsForm(forms.ModelForm):
     )
     overdue_grace_days = forms.IntegerField(
         label="Missed follow-up (days after)",
-        min_value=0,
+        min_value=1,
         max_value=60,
-        help_text="If a patient hasn't come back, prepare a 'please visit us' message this many days after the due date.",
+        help_text=(
+            "Prepare a 'please visit us' message this many days after the due date "
+            "if the patient hasn't come back (1 = the day after)."
+        ),
     )
     default_appointment_minutes = forms.IntegerField(
         label="Usual appointment length (minutes)",
@@ -384,6 +473,8 @@ class ClinicSettingsForm(forms.ModelForm):
             "default_appointment_minutes",
             "prescription_header",
             "prescription_footer",
+            "prescription_paper",
+            "prescription_pad_space",
         ]
         labels = {
             "name": "Clinic name",
@@ -392,12 +483,19 @@ class ClinicSettingsForm(forms.ModelForm):
             "timezone": "Time zone",
             "prescription_header": "Letterhead lines",
             "prescription_footer": "Footer",
+            "prescription_paper": "Paper size",
+            "prescription_pad_space": "Pre-printed pad",
         }
         help_texts = {
             "phone": "Shown in reminder messages and on printed prescriptions.",
             "timezone": "Appointment times and reminders follow this clock.",
             "prescription_header": "Extra lines under the clinic name, e.g. clinic timings or a second phone number.",
             "prescription_footer": "Printed at the bottom, e.g. \"Please bring this prescription on your next visit.\"",
+            "prescription_paper": "The usual paper for printed prescriptions. Doctors can switch on the print page.",
+            "prescription_pad_space": (
+                "For pads that already have your letterhead printed on them: the app leaves this much "
+                "space blank at the top instead of printing its own letterhead."
+            ),
         }
         widgets = {
             "phone": forms.TextInput(attrs={"type": "tel"}),

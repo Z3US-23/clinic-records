@@ -12,6 +12,9 @@
 .role-guide { row-gap: 12px; align-items: start; }
 .role-guide dd { font-weight: 400; color: var(--text-muted); }
 
+/* Join link for an invited staff member: full width, monospace so it is easy to read back */
+.invite-url { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; }
+
 /* How a doctor's name prints on prescriptions */
 .prescription-preview {
   display: flex; flex-direction: column; gap: 2px;

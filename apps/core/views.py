@@ -4,44 +4,45 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, time, timedelta
+from datetime import timedelta
 from functools import lru_cache
 
 from django import forms
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.staticfiles import finders
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q
 from django.http import FileResponse, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
 from django.templatetags.static import static
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_http_methods, require_safe
+from django.utils.dateformat import format as format_date
+from django.views.decorators.http import require_http_methods, require_POST, require_safe
 
-from apps.accounts.models import Membership, User
+from apps.accounts.models import Clinic, Membership, User
 from apps.appointments.models import Appointment
+from apps.appointments.scheduling import waiting_room
 from apps.clinical.models import Visit
 from apps.patients.models import Patient
 from apps.reminders.models import MessageTemplate, Reminder
-from apps.reminders.services import generate_reminders
+from apps.reminders.services import booked_appointments, generate_reminders, overdue_grace_days
 
 from .audit import Action, log_action
 from .exports import build_clinic_export, export_counts
-from .models import AuditLog
+from .models import AuditLog, SetupChecklist
 from .permissions import OWNER_ONLY, clinic_required
+from .services import MISSED_FOLLOW_UP_WINDOW_DAYS, day_bounds, missed_follow_ups, reschedule_requests
 
 logger = logging.getLogger(__name__)
 
+# How many "asking for another time" requests the Today page lists (its badge shows the total).
+RESCHEDULE_LIST_LIMIT = 10
+
 
 # --- Helpers --------------------------------------------------------------------------------
-
-def day_bounds(day):
-    """Start and end of a calendar day as aware datetimes, in the clinic's timezone (set by the middleware)."""
-    start = timezone.make_aware(datetime.combine(day, time.min))
-    return start, start + timedelta(days=1)
-
 
 def greeting_for(moment):
     if moment.hour < 12:
@@ -60,6 +61,22 @@ def staff_display_names(clinic):
     """{user_id: 'Dr. Bilal Hussain'} for everyone in the clinic: one query instead of one per row."""
     memberships = Membership.objects.filter(clinic=clinic).select_related("user")
     return {m.user_id: m.display_name for m in memberships}
+
+
+def doctor_name(appointment, names):
+    """The booked doctor's display name ('' for "any doctor"), looked up in staff_display_names()."""
+    if not appointment.doctor_id:
+        return ""
+    return names.get(appointment.doctor_id) or appointment.doctor.full_name
+
+
+def relative_day(day, today):
+    """'Today', 'Tomorrow' or 'Wed 8 Oct'."""
+    if day == today:
+        return "Today"
+    if day == today + timedelta(days=1):
+        return "Tomorrow"
+    return format_date(day, "D j M")
 
 
 def whatsapp_blocker(patient):
@@ -101,22 +118,21 @@ def dashboard(request):
         .order_by("scheduled_at", "pk")
     )
     for appt in appointments:
-        appt.doctor_name = (names.get(appt.doctor_id) or appt.doctor.full_name) if appt.doctor_id else ""
-    # There is no separate "arrived at" time: the status change to Arrived is the last update,
-    # so updated_at gives the order patients walked in.
-    waiting = sorted(
-        (a for a in appointments if a.status == Appointment.Status.ARRIVED), key=lambda a: (a.updated_at, a.pk)
-    )
-    for token, appt in enumerate(waiting, start=1):
-        appt.token = token
+        appt.doctor_name = doctor_name(appt, names)
+    # In arrival order, with the same token numbers as the day view.
+    waiting = waiting_room(appointments)
+
+    # Patients who tapped "I need another time" on their confirmation link (mostly about tomorrow).
+    requests = reschedule_requests(clinic, today)
+    asking_new_time = list(requests[:RESCHEDULE_LIST_LIMIT])
+    for appt in asking_new_time:
+        appt.doctor_name = doctor_name(appt, names)
+        appt.day_label = relative_day(timezone.localtime(appt.scheduled_at).date(), today)
+    asking_total = len(asking_new_time) if len(asking_new_time) < RESCHEDULE_LIST_LIMIT else requests.count()
 
     # Reminders.
-    pending = Reminder.objects.filter(clinic=clinic, status=Reminder.Status.PENDING)
-    reminder_stats = pending.aggregate(
-        due=Count("pk", filter=Q(due_date__lte=today)),
-        missed=Count("pk", filter=Q(kind=Reminder.Kind.OVERDUE)),
-    )
-    reminders_to_send = list(pending.filter(due_date__lte=today).select_related("patient").order_by("due_date", "pk")[:5])
+    reminders_due = Reminder.objects.filter(clinic=clinic, status=Reminder.Status.PENDING, due_date__lte=today)
+    reminders_to_send = list(reminders_due.select_related("patient").order_by("due_date", "pk")[:5])
     for reminder in reminders_to_send:
         reminder.blocker = whatsapp_blocker(reminder.patient)
 
@@ -135,31 +151,36 @@ def dashboard(request):
         "stats": {
             "appointments_today": len(appointments),
             "waiting": len(waiting),
-            "reminders_due": reminder_stats["due"],
-            "missed_follow_ups": reminder_stats["missed"],
+            "reschedule_requests": asking_total,
+            "reminders_due": reminders_due.count(),
+            "missed_follow_ups": missed_follow_ups(clinic, today).count(),
             "patients": patient_stats["active"],
             "new_this_month": patient_stats["new_this_month"],
         },
         "waiting": waiting,
         "appointments": appointments,
+        "asking_new_time": asking_new_time,
         "reminders_to_send": reminders_to_send,
         "coming_back": coming_back_soon(clinic, today, day_start),
         # Clinical text (diagnoses) only ever goes to doctors and owners.
         "recent_visits": recent_visits(clinic, request.user) if membership.is_clinician else [],
         "onboarding_steps": [],
     }
-    if membership.is_owner and not patient_stats["all"]:
-        context["onboarding_steps"] = onboarding_steps(clinic)
-        context["onboarding_done"] = sum(step["done"] for step in context["onboarding_steps"])
+    if membership.is_owner:
+        steps = setup_checklist(clinic, request.user, patient_count=patient_stats["all"])
+        context["onboarding_steps"] = steps
+        context["onboarding_done"] = sum(step["done"] for step in steps)
     return render(request, "core/dashboard.html", context)
 
 
 def coming_back_soon(clinic, today, day_start, days=7, limit=10):
-    """Patients whose follow-up date falls in the next week and who haven't been seen since."""
+    """Patients whose follow-up date falls in the next week and who haven't been seen since.
+
+    `is_booked` uses the reminders app's rule, so a patient who asked for another time (or whose
+    old booking nobody closed) is not shown as booked.
+    """
     seen_again = Visit.objects.filter(patient=OuterRef("patient"), visit_date__gt=OuterRef("visit_date"))
-    booked = Appointment.objects.filter(
-        patient=OuterRef("patient"), status__in=Appointment.ACTIVE_STATUSES, scheduled_at__gte=day_start
-    )
+    booked = booked_appointments(OuterRef("patient_id"), OuterRef("visit_date"), OuterRef("appointment_id"), day_start)
     return list(
         Visit.objects.filter(
             clinic=clinic,
@@ -180,26 +201,52 @@ def recent_visits(clinic, doctor, limit=5):
     )
 
 
-def onboarding_steps(clinic):
-    """First-day checklist for a new clinic owner (shown until the first patient is added)."""
-    return [
+# --- "Get your clinic ready" checklist (owners) ---------------------------------------------
+
+# The reminders:templates page writes an audit entry each time the owner saves or resets a message
+# ("Updated appointment message template"). Saving the standard wording stores no MessageTemplate
+# (on purpose, so later improvements reach the clinic), so that entry is what shows it was reviewed.
+TEMPLATE_SAVED_AUDIT_TEXT = "message template"
+
+
+def setup_checklist(clinic, owner, patient_count):
+    """The owner's checklist steps, or [] once every step is done or the owner has hidden it.
+
+    One query, however many steps there are.
+    """
+    flags = (
+        Clinic.objects.filter(pk=clinic.pk)
+        .annotate(
+            hidden=Exists(SetupChecklist.objects.filter(clinic=OuterRef("pk"), hidden_at__isnull=False)),
+            has_staff=Exists(
+                Membership.objects.filter(clinic=OuterRef("pk"), accepted_at__isnull=False).exclude(user=owner)
+            ),
+            has_own_wording=Exists(MessageTemplate.objects.filter(clinic=OuterRef("pk"))),
+            saved_wording=Exists(
+                AuditLog.objects.filter(
+                    clinic=OuterRef("pk"), action=Action.UPDATE, summary__contains=TEMPLATE_SAVED_AUDIT_TEXT
+                )
+            ),
+        )
+        .values("hidden", "has_staff", "has_own_wording", "saved_wording")
+        .get()
+    )
+    if flags["hidden"]:
+        return []
+    steps = [
         {
-            "label": "Add your first patient",
-            "text": "Name, phone number and age are enough to start.",
+            "label": "Add your patients",
+            "text": "One at a time (name, phone number and age are enough), or all at once from Excel.",
             "url": reverse("patients:create"),
-            "done": False,
-        },
-        {
-            "label": "Import patients from a spreadsheet",
-            "text": "Already have a patient list in Excel? Upload it as a CSV file.",
-            "url": reverse("patients:import"),
-            "done": False,
+            "extra_url": reverse("patients:import"),
+            "extra_label": "Import a spreadsheet",
+            "done": patient_count > 0,
         },
         {
             "label": "Add staff",
             "text": "Give each doctor and receptionist their own login.",
             "url": reverse("accounts:staff_list"),
-            "done": Membership.objects.filter(clinic=clinic).count() > 1,
+            "done": flags["has_staff"],
         },
         {
             "label": "Set clinic details for prescriptions",
@@ -209,11 +256,71 @@ def onboarding_steps(clinic):
         },
         {
             "label": "Review reminder messages",
-            "text": "The WhatsApp wording patients get before appointments and follow-ups.",
+            "text": "Read the WhatsApp wording patients get, then press Save (keeping the standard wording is fine).",
             "url": reverse("reminders:templates"),
-            "done": MessageTemplate.objects.filter(clinic=clinic).exists(),
+            "done": flags["has_own_wording"] or flags["saved_wording"],
         },
     ]
+    if all(step["done"] for step in steps):
+        return []
+    return steps
+
+
+@require_POST
+@clinic_required(roles=OWNER_ONLY)
+def hide_setup_checklist(request):
+    """The "Hide" button on the owner's "Get your clinic ready" card."""
+    clinic = request.clinic
+    SetupChecklist.objects.update_or_create(
+        clinic=clinic, defaults={"hidden_at": timezone.now(), "hidden_by": request.user}
+    )
+    log_action(request, Action.UPDATE, clinic, "Hid the setup checklist")
+    messages.success(request, "Checklist hidden. Everything on it is in the menu under Clinic.")
+    return redirect("core:dashboard")
+
+
+# --- Missed follow-ups ----------------------------------------------------------------------
+
+def follow_up_message_state(visit):
+    """(text, badge class): what happened about the WhatsApp message for a missed follow-up."""
+    if visit.message_status == Reminder.Status.SENT:
+        if visit.message_sent_at:
+            return f"Message sent {format_date(timezone.localtime(visit.message_sent_at), 'j M')}", "badge-success"
+        return "Message sent", "badge-success"
+    blocker = whatsapp_blocker(visit.patient)
+    if blocker:
+        return f"{blocker}: call", "badge-muted"
+    if visit.message_status == Reminder.Status.PENDING:
+        return "Message to send", "badge-warning"
+    if visit.message_status == Reminder.Status.SKIPPED:
+        return "Message skipped", "badge-muted"
+    return "Not messaged", "badge-muted"
+
+
+@require_safe
+@clinic_required
+def missed_follow_ups_view(request):
+    """Patients who didn't come back when the doctor asked, for staff to phone or book.
+
+    Shows no diagnosis or other clinical text, so every role may open it.
+    """
+    clinic = request.clinic
+    today = timezone.localdate()
+    visits = (
+        missed_follow_ups(clinic, today)
+        .select_related("patient")
+        .order_by("-follow_up_date", "patient__full_name", "pk")
+    )
+    page_obj = Paginator(visits, 25).get_page(request.GET.get("page"))
+    for visit in page_obj:
+        visit.days_late = (today - visit.follow_up_date).days
+        visit.message_text, visit.message_badge = follow_up_message_state(visit)
+    context = {
+        "page_obj": page_obj,
+        "grace_days": overdue_grace_days(clinic),
+        "window_days": MISSED_FOLLOW_UP_WINDOW_DAYS,
+    }
+    return render(request, "core/missed_follow_ups.html", context)
 
 
 # --- Audit log ------------------------------------------------------------------------------
@@ -251,9 +358,12 @@ class AuditLogFilterForm(forms.Form):
 
     def __init__(self, *args, clinic, **kwargs):
         super().__init__(*args, **kwargs)
-        # Only people who are (or were) members of this clinic.
+        # Only people who are (or were) members of this clinic. Someone who has not accepted an
+        # invitation yet is left out: their name belongs to them, not to the clinic that invited them.
         self.fields["user"].queryset = (
-            User.objects.filter(memberships__clinic=clinic).distinct().order_by("full_name")
+            User.objects.filter(memberships__clinic=clinic, memberships__accepted_at__isnull=False)
+            .distinct()
+            .order_by("full_name")
         )
 
 

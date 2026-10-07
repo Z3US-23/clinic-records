@@ -33,6 +33,12 @@ VITALS = [
     ("Blood sugar", "blood_sugar", "mg/dL"),
 ]
 
+# Printed prescription: paper sizes (CSS classes rx-a5 / rx-a4 in clinical.css) ...
+PRESCRIPTION_PAPERS = {"a5": "A5 (half sheet)", "a4": "A4 (full sheet)"}
+DEFAULT_PAPER = "a5"
+# ... and, for pads with the letterhead already printed on them, the blank space (mm) left at the top.
+PAD_SPACES = {30: "3 cm", 40: "4 cm", 50: "5 cm", 60: "6 cm"}
+
 
 # --- Permissions --------------------------------------------------------------
 
@@ -88,8 +94,40 @@ def vitals_for_display(visit):
         if not isinstance(value, str):
             value = floatformat(value, -1)  # 37.0 -> "37", 37.5 -> "37.5"
         text = f"{value}{unit}" if unit == "%" else f"{value} {unit}".strip()
+        if attribute == "temperature_c":
+            # Stored in °C; most doctors here read °F, so show both.
+            text += f" ({floatformat(visit.temperature_f, 1)} °F)"
         shown.append({"label": label, "text": text})
     return shown
+
+
+def prescription_print_options(query, clinic):
+    """Paper size and letterhead for the printed prescription, e.g. {"paper": "a4", "pad_space": 40}.
+
+    Chosen on the print page itself (no data changes, so a plain GET):
+      ?paper=a4  prints on A4 instead of A5.
+      ?pad=40    is for pads that already have the clinic's letterhead printed on them: the
+                 app's letterhead is left off the paper and 40 mm is kept blank at the top.
+    Missing or unknown values fall back to the clinic's saved choice (Clinic settings:
+    `Clinic.prescription_paper` / `Clinic.prescription_pad_space`), then to A5 with the
+    letterhead printed.
+    """
+    allowed_spaces = {0, *PAD_SPACES}  # 0 = print the letterhead
+
+    paper = query.get("paper", "")
+    if paper not in PRESCRIPTION_PAPERS:
+        paper = str(clinic.prescription_paper or "").lower()
+    if paper not in PRESCRIPTION_PAPERS:
+        paper = DEFAULT_PAPER
+
+    pad = query.get("pad", "")
+    if pad.isdecimal() and int(pad) in allowed_spaces:
+        pad_space = int(pad)
+    else:
+        pad_space = clinic.prescription_pad_space
+    if pad_space not in allowed_spaces:
+        pad_space = 0
+    return {"paper": paper, "pad_space": pad_space}
 
 
 def medicine_suggestions(clinic, limit=MEDICINE_SUGGESTION_LIMIT):

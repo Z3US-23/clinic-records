@@ -61,7 +61,7 @@ class LabCreateTests(TempMediaMixin, ClinicalTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTemplateUsed(response, "clinical/lab_form.html")
                 self.assertContains(response, 'enctype="multipart/form-data"')
-                self.assertContains(response, "Allergies: Penicillin")
+                self.assert_allergy_banner(response, "Allergies: Penicillin")
                 visits = list(response.context["form"].fields["visit"].queryset)
                 self.assertEqual(visits, [visit])  # only this patient's visits
 
@@ -268,3 +268,91 @@ class LabDeleteTests(TempMediaMixin, ClinicalTestCase):
         self.login(self.receptionist)
         self.assertEqual(self.client.post(delete_url(self.lab)).status_code, 403)
         self.assertTrue(LabResult.objects.filter(pk=self.lab.pk).exists())
+
+
+def update_url(lab):
+    return reverse("clinical:lab_update", args=[lab.pk])
+
+
+class LabUpdateTests(TempMediaMixin, ClinicalTestCase):
+    def setUp(self):
+        self.login(self.doctor)
+        self.lab = self.make_lab(result_text="7.8 %", result_date=timezone.localdate() - timedelta(days=2))
+        self.stored_path = self.lab.file.path
+
+    def labs_tab_url(self):
+        return reverse("patients:detail", args=[self.patient.pk]) + "?tab=labs"
+
+    def test_clinicians_see_the_form_filled_in(self):
+        for user in (self.owner, self.doctor):
+            with self.subTest(user=user.full_name):
+                self.login(user)
+                response = self.client.get(update_url(self.lab))
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Edit lab result")
+                self.assertContains(response, "7.8 %")
+                self.assertContains(response, file_url(self.lab))  # the report already attached
+                self.assertTrue(
+                    self.audit_exists(
+                        Action.VIEW, self.lab, f"Opened lab result for editing for {self.patient.mrn}", user=user
+                    )
+                )
+
+    def test_correct_the_values_and_keep_the_file(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(update_url(self.lab), lab_post_data(result_text="7.2 %", is_abnormal="on"))
+        self.assertRedirects(response, self.labs_tab_url(), fetch_redirect_response=False)
+        self.lab.refresh_from_db()
+        self.assertEqual((self.lab.result_text, self.lab.is_abnormal), ("7.2 %", True))
+        self.assertEqual(self.lab.file.path, self.stored_path)
+        self.assertTrue(os.path.exists(self.stored_path))
+        self.assertTrue(self.audit_exists(Action.UPDATE, self.lab, f"Updated lab result for {self.patient.mrn}"))
+
+    def test_a_new_file_replaces_the_old_one(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(update_url(self.lab), lab_post_data(file=upload("clearer scan.png", PNG_BYTES)))
+        self.assertEqual(response.status_code, 302)
+        self.lab.refresh_from_db()
+        self.assertEqual(self.lab.original_filename, "clearer scan.png")
+        with self.lab.file.open("rb") as stored:
+            self.assertEqual(stored.read(), PNG_BYTES)
+        self.assertFalse(os.path.exists(self.stored_path))
+
+    def test_a_rejected_file_keeps_the_old_one(self):
+        response = self.client.post(update_url(self.lab), lab_post_data(file=upload("report.pdf", HTML_BYTES)))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["form"].has_error("file", "signature"))
+        self.lab.refresh_from_db()
+        self.assertEqual(self.lab.result_text, "7.8 %")
+        self.assertTrue(os.path.exists(self.stored_path))
+
+    def test_a_result_from_a_visit_goes_back_to_the_visit(self):
+        visit = self.make_visit(self.patient)
+        lab = self.make_lab(content=None, visit=visit)
+        response = self.client.post(update_url(lab), lab_post_data(visit=str(visit.pk)))
+        self.assertRedirects(response, visit.get_absolute_url(), fetch_redirect_response=False)
+        self.assertContains(self.client.get(visit.get_absolute_url()), update_url(lab))
+
+    def test_visit_of_another_patient_is_rejected(self):
+        other_visit = self.make_visit(make_patient(self.clinic, full_name="Usman Tariq"))
+        response = self.client.post(update_url(self.lab), lab_post_data(visit=str(other_visit.pk)))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("visit", response.context["form"].errors)
+
+    def test_labs_tab_links_to_the_edit_page(self):
+        response = self.client.get(self.labs_tab_url())
+        self.assertContains(response, update_url(self.lab))
+
+    def test_other_clinics_result_is_not_found(self):
+        self.login(self.other_owner)
+        self.assertEqual(self.client.get(update_url(self.lab)).status_code, 404)
+        self.assertEqual(self.client.post(update_url(self.lab), lab_post_data(result_text="x")).status_code, 404)
+        self.lab.refresh_from_db()
+        self.assertEqual(self.lab.result_text, "7.8 %")
+
+    def test_receptionist_is_forbidden(self):
+        self.login(self.receptionist)
+        self.assertEqual(self.client.get(update_url(self.lab)).status_code, 403)
+        self.assertEqual(self.client.post(update_url(self.lab), lab_post_data(result_text="x")).status_code, 403)
+        self.lab.refresh_from_db()
+        self.assertEqual(self.lab.result_text, "7.8 %")

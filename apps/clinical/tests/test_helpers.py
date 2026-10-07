@@ -7,11 +7,17 @@ from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase
 from django.urls import reverse
 
-from apps.accounts.models import User
+from apps.accounts.models import Clinic, User
 from apps.clinical.models import PrescriptionItem, Visit
 from apps.clinical.templatetags.clinical_tags import rx_details
 from apps.clinical.uploads import safe_filename, validate_lab_file
-from apps.clinical.utils import add_months, follow_up_from, medicine_suggestions, vitals_for_display
+from apps.clinical.utils import (
+    add_months,
+    follow_up_from,
+    medicine_suggestions,
+    prescription_print_options,
+    vitals_for_display,
+)
 
 from .base import HTML_BYTES, JPEG_BYTES, PDF_BYTES, PNG_BYTES, ClinicalTestCase, TempMediaMixin, upload
 
@@ -46,7 +52,7 @@ class DisplayTests(SimpleTestCase):
             shown,
             {
                 "BP": "120/80 mmHg",
-                "Temp": "37 °C",
+                "Temp": "37 °C (98.6 °F)",  # stored in °C, most doctors here read °F
                 "SpO₂": "98%",
                 "Weight": "80.5 kg",
                 "Height": "170 cm",
@@ -56,6 +62,39 @@ class DisplayTests(SimpleTestCase):
 
     def test_blood_pressure_needs_both_numbers(self):
         self.assertEqual(vitals_for_display(Visit(bp_systolic=120)), [])
+
+    def test_temperature_in_fahrenheit(self):
+        self.assertIsNone(Visit().temperature_f)
+        self.assertEqual(Visit(temperature_c=Decimal("37.0")).temperature_f, 98.6)
+        self.assertEqual(Visit(temperature_c=Decimal("38.3")).temperature_f, 100.9)
+        shown = vitals_for_display(Visit(temperature_c=Decimal("40.0")))
+        self.assertEqual(shown, [{"label": "Temp", "text": "40 °C (104.0 °F)"}])
+
+
+class PrintOptionTests(SimpleTestCase):
+    """Paper size and letterhead of the printed prescription, chosen on the print page."""
+
+    def test_defaults_are_a5_with_the_letterhead(self):
+        self.assertEqual(prescription_print_options({}, Clinic()), {"paper": "a5", "pad_space": 0})
+
+    def test_choices_from_the_page(self):
+        options = prescription_print_options({"paper": "a4", "pad": "40"}, Clinic())
+        self.assertEqual(options, {"paper": "a4", "pad_space": 40})
+        self.assertEqual(prescription_print_options({"pad": "0"}, Clinic())["pad_space"], 0)
+
+    def test_unknown_values_fall_back_to_the_defaults(self):
+        for query in ({"paper": "letter"}, {"paper": "A4<script>"}, {"pad": "35"}, {"pad": "-40"}, {"pad": "x" * 50}):
+            with self.subTest(query=query):
+                self.assertEqual(prescription_print_options(query, Clinic()), {"paper": "a5", "pad_space": 0})
+
+    def test_the_clinics_saved_choice_is_the_default(self):
+        # Saved in Clinic settings (Clinic.prescription_paper / prescription_pad_space).
+        clinic = Clinic()
+        clinic.prescription_paper, clinic.prescription_pad_space = "A4", 50
+        self.assertEqual(prescription_print_options({}, clinic), {"paper": "a4", "pad_space": 50})
+        self.assertEqual(prescription_print_options({"paper": "a5", "pad": "0"}, clinic), {"paper": "a5", "pad_space": 0})
+        clinic.prescription_paper, clinic.prescription_pad_space = "letter", 35  # not offered here
+        self.assertEqual(prescription_print_options({}, clinic), {"paper": "a5", "pad_space": 0})
 
     def test_rx_details_skips_blanks(self):
         item = PrescriptionItem(medicine="Tab. X", dose="1 tablet", frequency="", duration="5 days")

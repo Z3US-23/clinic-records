@@ -1,5 +1,7 @@
 {% comment %}
 "Lab results" tab (clinicians only). Expects: patient, lab_results.
+This is the one place that lists every lab result, including those not linked to a visit,
+so each row has its own Delete (and Edit) button.
 {% endcomment %}
 <section class="card">
   <div class="card-header">
@@ -9,7 +11,7 @@
   {% if lab_results %}
     <div class="table-wrap">
       <table class="table table-stack">
-        <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Report</th></tr></thead>
+        <thead><tr><th scope="col">Date</th><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Report</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
           {% for lab in lab_results %}
             <tr>
@@ -22,6 +24,15 @@
               <td data-label="Result" class="lab-result-cell">{% if lab.result_text %}<span class="pre-line">{{ lab.result_text|truncatechars:160 }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
               <td data-label="Report" class="nowrap">
                 {% if lab.file %}<a href="{% url 'clinical:lab_file' lab.pk %}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="file" size="sm" %} View</a>{% else %}<span class="subtle">No file</span>{% endif %}
+              </td>
+              <td data-label="" class="text-right nowrap">
+                <div class="btn-group">
+                  <a class="btn btn-ghost btn-sm" href="{% url 'clinical:lab_update' lab.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
+                  <form method="post" action="{% url 'clinical:lab_delete' lab.pk %}" class="inline-form" data-confirm="Delete this lab result{% if lab.file %} and its file{% endif %}? This can't be undone.">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-ghost btn-sm" aria-label="Delete lab result {{ lab.test_name }}">{% include "includes/icon.html" with name="trash" size="sm" %}</button>
+                  </form>
+                </div>
               </td>
             </tr>
           {% endfor %}

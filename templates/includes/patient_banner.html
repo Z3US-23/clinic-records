@@ -2,7 +2,8 @@
 {% comment %}
 Compact patient header for pages about one patient (visit form, lab upload, appointment...).
 Usage: {% include "includes/patient_banner.html" with patient=patient %}
-Allergies are shown only to clinicians (is_clinician from the context processor).
+Allergies are shown only to clinicians (is_clinician from the context processor), always in full:
+on some pages this banner is the only place the doctor sees them.
 {% endcomment %}
 <div class="patient-banner">
   <span class="avatar avatar-lg">{{ patient.full_name|initials }}</span>
@@ -17,6 +18,6 @@ Allergies are shown only to clinicians (is_clinician from the context processor)
     </div>
   </div>
   {% if is_clinician and patient.allergies %}
-    <div class="allergy-banner">{% include "includes/icon.html" with name="alert" size="sm" %}Allergies: {{ patient.allergies|truncatechars:80 }}</div>
+    <div class="allergy-banner">{% include "includes/icon.html" with name="alert" size="sm" %}<span>Allergies: <span class="pre-line">{{ patient.allergies }}</span></span></div>
   {% endif %}
 </div>

@@ -1,26 +1,65 @@
 {% extends "base.html" %}
-{% load core_tags %}
-{% block title %}{{ membership.user.full_name }} · Staff{% endblock %}
+{% load static core_tags %}
+{% block title %}{{ membership.display_name }} · Staff{% endblock %}
 {% block content_class %}content-narrow{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/accounts.css' %}">{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <div class="breadcrumbs"><a href="{% url 'accounts:staff_list' %}">Staff</a><span>›</span><span>{{ membership.user.full_name }}</span></div>
+      <div class="breadcrumbs"><a href="{% url 'accounts:staff_list' %}">Staff</a><span>›</span><span>{{ membership.display_name }}</span></div>
       <div class="row">
-        <span class="avatar avatar-lg">{{ membership.user.full_name|initials }}</span>
+        <span class="avatar avatar-lg">{{ membership.display_name|initials }}</span>
         <div>
-          <h1>{{ membership.user.full_name }}</h1>
-          <p class="subtitle">{{ membership.user.email }}</p>
+          {% if membership.is_pending %}
+            <h1>{{ membership.user.email }}</h1>
+            <p class="subtitle">Invited {{ membership.invited_at|date:"j M Y" }} · <span class="badge badge-warning">Waiting for them to accept</span></p>
+          {% else %}
+            <h1>{{ membership.user.full_name }}</h1>
+            <p class="subtitle">{{ membership.user.email }}</p>
+          {% endif %}
         </div>
       </div>
     </div>
-    {% if membership.pk != current_membership.pk %}
+    {% if membership.pk != current_membership.pk and not membership.is_pending %}
       <div class="page-actions">
         <a class="btn btn-secondary" href="{% url 'accounts:staff_set_password' membership.pk %}">{% include "includes/icon.html" with name="shield" %}Set a new password</a>
       </div>
     {% endif %}
   </div>
+
+  {% if membership.is_pending %}
+    <div class="card mb-3">
+      <div class="card-header"><h2 class="card-title-icon">{% include "includes/icon.html" with name="link" %}Join link</h2></div>
+      <div class="card-body stack">
+        {% if invite_url %}
+          <p class="mb-0">This email already has a {{ PRODUCT_NAME }} account. Send them this link. They open it, sign in with their own password and tap <strong>Join</strong>. Until then they can't see anything in {{ current_clinic.name }}.</p>
+          <div class="field">
+            <label for="invite-url">Link for {{ membership.user.email }}</label>
+            <input id="invite-url" class="invite-url" type="text" value="{{ invite_url }}" readonly>
+            <span class="help">Works only for {{ membership.user.email }}, once, until {{ membership.invite_expires_at|date:"j M Y" }}.</span>
+          </div>
+          <div class="btn-group">
+            <a class="btn btn-whatsapp" href="{{ invite_whatsapp_url }}" target="_blank" rel="noopener">{% include "includes/icon.html" with name="whatsapp" %}Send on WhatsApp</a>
+          </div>
+        {% else %}
+          <div class="alert alert-warning mb-0">{% include "includes/icon.html" with name="alert" %}<div>This join link has expired. Make a new one and send it to them again.</div></div>
+        {% endif %}
+        <div class="btn-group">
+          <form method="post" action="{% url 'accounts:staff_invite' membership.pk %}" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="renew">
+            <button type="submit" class="btn btn-secondary">{% include "includes/icon.html" with name="repeat" %}Make a new link</button>
+          </form>
+          <form method="post" action="{% url 'accounts:staff_invite' membership.pk %}" class="inline-form" data-confirm="Cancel the invitation for {{ membership.user.email }}?">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="cancel">
+            <button type="submit" class="btn btn-danger-outline">{% include "includes/icon.html" with name="x" %}Cancel invitation</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endif %}
 
   <form method="post" class="stack">
     {% csrf_token %}
@@ -43,9 +82,13 @@
     <div class="card">
       <div class="card-header"><h2>Access</h2></div>
       <div class="card-body">
-        <div class="form-grid">
-          {% include "includes/field.html" with field=form.is_active %}
-        </div>
+        {% if membership.is_pending %}
+          <p class="mb-0 muted">Their access starts when they accept the invitation.</p>
+        {% else %}
+          <div class="form-grid">
+            {% include "includes/field.html" with field=form.is_active %}
+          </div>
+        {% endif %}
       </div>
     </div>
 

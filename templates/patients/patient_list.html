@@ -69,7 +69,7 @@
               <td data-label="Age / sex">
                 {% if patient.age_display %}{{ patient.age_display }}{% if patient.dob_is_estimated %} <span class="subtle">(approx.)</span>{% endif %} · {% endif %}{{ patient.get_sex_display }}
               </td>
-              <td data-label="Phone" class="nowrap">{{ patient.phone }}</td>
+              <td data-label="Phone" class="nowrap">{% if patient.phone %}{{ patient.phone }}{% else %}<span class="subtle">—</span>{% endif %}</td>
               <td data-label="Last visit" class="nowrap">{% if patient.last_visit %}{{ patient.last_visit|date:"j M Y" }}{% else %}<span class="subtle">—</span>{% endif %}</td>
               <td data-label="Next appointment" class="nowrap">
                 {% if patient.next_appointment %}

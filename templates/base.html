@@ -35,7 +35,7 @@
     {% endif %}
 
     <nav class="nav">
-      <a class="nav-link {% if section == 'core' and url_name == 'dashboard' %}active{% endif %}" href="{% url 'core:dashboard' %}">{% include "includes/icon.html" with name="home" %}Today</a>
+      <a class="nav-link {% if section == 'core' and url_name == 'dashboard' %}active{% endif %}" href="{% url 'core:dashboard' %}">{% include "includes/icon.html" with name="home" %}Today{% if nav_reschedule_requests %}<span class="badge badge-count" title="Patients asking for another time">{{ nav_reschedule_requests }}<span class="visually-hidden"> asking for another time</span></span>{% endif %}</a>
       <a class="nav-link {% if section == 'patients' %}active{% endif %}" href="{% url 'patients:list' %}">{% include "includes/icon.html" with name="users" %}Patients</a>
       <a class="nav-link {% if section == 'appointments' %}active{% endif %}" href="{% url 'appointments:day' %}">{% include "includes/icon.html" with name="calendar" %}Appointments</a>
       <a class="nav-link {% if section == 'reminders' and url_name != 'templates' %}active{% endif %}" href="{% url 'reminders:list' %}">{% include "includes/icon.html" with name="bell" %}Reminders{% if nav_reminders_due %}<span class="badge badge-count">{{ nav_reminders_due }}</span>{% endif %}</a>
@@ -75,8 +75,8 @@
         <div class="search-results" role="listbox" hidden></div>
       </div>
       <div class="topbar-actions">
-        <a class="btn btn-secondary hide-mobile" href="{% url 'appointments:create' %}">{% include "includes/icon.html" with name="calendar-plus" %}<span class="btn-label">Book</span></a>
-        <a class="btn btn-primary" href="{% url 'patients:create' %}">{% include "includes/icon.html" with name="user-plus" %}<span class="btn-label">New patient</span></a>
+        <a class="btn btn-secondary hide-mobile" href="{% url 'appointments:create' %}" title="Book appointment">{% include "includes/icon.html" with name="calendar-plus" %}<span class="btn-label">Book</span></a>
+        <a class="btn btn-primary" href="{% url 'patients:create' %}" title="New patient">{% include "includes/icon.html" with name="user-plus" %}<span class="btn-label">New patient</span></a>
       </div>
     </header>
 
@@ -87,7 +87,7 @@
   </div>
 
   <nav class="bottom-nav no-print" aria-label="Quick navigation">
-    <a href="{% url 'core:dashboard' %}" class="{% if section == 'core' and url_name == 'dashboard' %}active{% endif %}">{% include "includes/icon.html" with name="home" %}Today</a>
+    <a href="{% url 'core:dashboard' %}" class="{% if section == 'core' and url_name == 'dashboard' %}active{% endif %}">{% include "includes/icon.html" with name="home" %}Today{% if nav_reschedule_requests %}<span class="badge badge-count" title="Patients asking for another time">{{ nav_reschedule_requests }}<span class="visually-hidden"> asking for another time</span></span>{% endif %}</a>
     <a href="{% url 'patients:list' %}" class="{% if section == 'patients' %}active{% endif %}">{% include "includes/icon.html" with name="users" %}Patients</a>
     <a href="{% url 'appointments:day' %}" class="{% if section == 'appointments' %}active{% endif %}">{% include "includes/icon.html" with name="calendar" %}Appointments</a>
     <a href="{% url 'reminders:list' %}" class="{% if section == 'reminders' %}active{% endif %}">{% include "includes/icon.html" with name="bell" %}Reminders{% if nav_reminders_due %}<span class="badge badge-count">{{ nav_reminders_due }}</span>{% endif %}</a>

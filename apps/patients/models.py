@@ -3,7 +3,7 @@ from django.db import models
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.core.phone import normalize_phone
+from apps.core.phone import normalize_mobile
 
 
 class Patient(models.Model):
@@ -33,7 +33,9 @@ class Patient(models.Model):
         default=False, help_text="Date of birth was worked out from an age the patient gave."
     )
 
-    phone = models.CharField(max_length=30, help_text="Mobile number")
+    phone = models.CharField(
+        "mobile number", max_length=30, blank=True, help_text="Leave empty if the patient has no mobile"
+    )
     whatsapp_phone = models.CharField(
         "WhatsApp number", max_length=30, blank=True, help_text="Only if different from the mobile number"
     )
@@ -75,8 +77,17 @@ class Patient(models.Model):
     def save(self, *args, **kwargs):
         if not self.mrn:
             self.mrn = self.clinic.allocate_mrn()
-        self.whatsapp_number = normalize_phone(self.whatsapp_phone or self.phone, self.clinic.country)
+        self.set_whatsapp_number()
         super().save(*args, **kwargs)
+
+    def set_whatsapp_number(self):
+        """Work out `whatsapp_number` from the numbers staff typed ("" if there is no usable mobile).
+
+        Uses the strict mobile check, so a landline or a number with a digit missing never gets a
+        wa.me link: the profile and the reminders page say to call instead.
+        save() calls this. Code that skips save() (the CSV import's bulk_create) must call it itself.
+        """
+        self.whatsapp_number = normalize_mobile(self.whatsapp_phone or self.phone, self.clinic.country)
 
     def get_absolute_url(self):
         return reverse("patients:detail", args=[self.pk])

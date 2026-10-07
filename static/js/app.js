@@ -15,12 +15,47 @@
     else if (e.target.closest("[data-sidebar-backdrop]")) setSidebar(false);
   });
 
-  // --- Confirm before destructive actions: <form data-confirm="Cancel this appointment?"> ---
+  // --- Form submits -------------------------------------------------------
+  // 1. Confirm before destructive actions: <form data-confirm="Cancel this appointment?">.
+  // 2. A double tap must not save twice (two visits, two bookings, a list imported twice). Once a
+  //    POST form is on its way, further submits of it are ignored and its buttons look busy.
+  //    Forms that don't leave this page (e.g. a file download) opt out with data-allow-resubmit.
+  //    The lock lifts by itself after RESUBMIT_AFTER_MS, so a stuck request can be tried again.
+  var RESUBMIT_AFTER_MS = 10000;
+
+  function unlock(form) {
+    delete form.dataset.submitting;
+    form.classList.remove("is-submitting");
+    form.querySelectorAll(".is-busy").forEach(function (button) {
+      button.classList.remove("is-busy");
+      button.removeAttribute("aria-disabled");
+    });
+  }
+
   document.addEventListener("submit", function (e) {
     var form = e.target;
     var submitter = e.submitter;
     var message = (submitter && submitter.getAttribute("data-confirm")) || form.getAttribute("data-confirm");
-    if (message && !window.confirm(message)) e.preventDefault();
+    if (message && !window.confirm(message)) { e.preventDefault(); return; }
+
+    if ((form.getAttribute("method") || "get").toLowerCase() !== "post") return; // searches and filters
+    if (form.hasAttribute("data-allow-resubmit")) return;
+    if (form.dataset.submitting) { e.preventDefault(); return; }
+
+    form.dataset.submitting = "1";
+    form.classList.add("is-submitting");
+    // Not `disabled`: the browser leaves disabled buttons out of the form data, and some forms
+    // need to know which button was pressed (e.g. "Save and book appointment").
+    if (submitter) {
+      submitter.classList.add("is-busy");
+      submitter.setAttribute("aria-disabled", "true");
+    }
+    setTimeout(function () { unlock(form); }, RESUBMIT_AFTER_MS);
+  });
+
+  // Coming back with the Back button can show the page exactly as it was left: unlock its forms.
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll("form[data-submitting]").forEach(unlock);
   });
 
   // --- Flash messages -------------------------------------------------------

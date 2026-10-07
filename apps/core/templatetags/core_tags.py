@@ -1,6 +1,6 @@
 from django import template
 
-from apps.core.phone import format_phone_display
+from apps.core.phone import ascii_digits, format_phone_display, normalize_phone
 
 register = template.Library()
 
@@ -51,3 +51,16 @@ def initials(name):
 def phone_display(number):
     """'923001234567' -> '+92 300 1234567'."""
     return format_phone_display(number)
+
+
+@register.filter
+def tel_href(raw, country="PK"):
+    """{{ patient.phone|tel_href:current_clinic.country }} -> 'tel:+923001234567' ('' if there are no digits).
+
+    A number we can't place gets its digits as typed, so the Call button still dials something sensible.
+    """
+    number = normalize_phone(raw, country)
+    if number:
+        return f"tel:+{number}"
+    digits = ascii_digits(raw)
+    return f"tel:{digits}" if digits else ""

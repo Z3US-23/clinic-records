@@ -44,7 +44,8 @@
         <div>This file contains private medical records. Keep it on a password-protected or encrypted drive, and never send it over WhatsApp or email.</div>
       </div>
 
-      <form method="post" class="form">{% csrf_token %}
+      {# data-allow-resubmit: the ZIP downloads and this page stays, so the button must stay usable. #}
+      <form method="post" class="form" data-allow-resubmit>{% csrf_token %}
         {% include "includes/field.html" with field=form.include_lab_files %}
         {% if counts.lab_files %}
           <p class="form-hint mb-0">{{ counts.lab_files|intcomma }} lab report file{{ counts.lab_files|pluralize }} uploaded so far.</p>

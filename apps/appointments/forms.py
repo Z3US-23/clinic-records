@@ -9,7 +9,7 @@ from apps.accounts.models import User
 
 from . import status as appt_status
 from .models import Appointment
-from .scheduling import MAX_DURATION_MINUTES, PAST_GRACE, doctor_names, find_clash
+from .scheduling import MAX_DURATION_MINUTES, PAST_GRACE, doctor_names, find_clash, only_doctor
 
 Status = Appointment.Status
 
@@ -68,11 +68,16 @@ class AppointmentForm(forms.ModelForm):
         self.scheduled_at = None  # worked out in clean()
         self.clash = None  # the other appointment, when the doctor is already busy at that time
 
+        # A solo practice: "any doctor" means this doctor (for bookings and the double-booking check).
+        self.only_doctor = only_doctor(clinic)
+
         names = doctor_names(clinic)
         doctor = self.fields["doctor"]
         # Only this clinic's doctors: a crafted id from another clinic fails validation.
         doctor.queryset = clinic.doctors
-        doctor.empty_label = "Any doctor"
+        # New bookings in a solo practice offer just the doctor. (Editing keeps "Any doctor", so an
+        # older "any doctor" appointment does not look changed and lose its confirmation.)
+        doctor.empty_label = None if self.is_new and self.only_doctor else "Any doctor"
         doctor.help_text = ""
         doctor.label_from_instance = lambda user: names.get(user.pk, user.full_name)
 
@@ -99,6 +104,14 @@ class AppointmentForm(forms.ModelForm):
         if day and day > timezone.localdate() + timedelta(days=MAX_DAYS_AHEAD):
             raise forms.ValidationError("That date is too far ahead. Please check the year.")
         return day
+
+    def clean_doctor(self):
+        doctor = self.cleaned_data.get("doctor")
+        if doctor is None and self.is_new and self.only_doctor is not None:
+            # Solo practice: every new booking is with the one doctor (double-booking check,
+            # "with Dr. …" in the reminder), even if the form was sent without a choice.
+            doctor = self.only_doctor
+        return doctor
 
     def clean(self):
         cleaned = super().clean()
@@ -153,7 +166,8 @@ class AppointmentForm(forms.ModelForm):
         return moved or reopened
 
     def _check_double_booking(self, cleaned):
-        doctor = cleaned.get("doctor")
+        # An older "any doctor" appointment in a solo practice is with the one doctor.
+        doctor = cleaned.get("doctor") or self.only_doctor
         minutes = cleaned.get("duration_minutes")
         if doctor is None or minutes is None or not self._needs_double_booking_check(cleaned):
             return
@@ -164,10 +178,12 @@ class AppointmentForm(forms.ModelForm):
         start = timezone.localtime(clash.scheduled_at)
         end = timezone.localtime(clash.ends_at)
         doctor_name = self.fields["doctor"].label_from_instance(doctor)
+        # The times go in brackets: "10:15 a.m." already ends with a full stop.
         self.add_error(
             None,
-            f"{doctor_name} already has {clash.patient.full_name} from {time_format(start, 'g:i a')} "
-            f"to {time_format(end, 'g:i a')}. Choose another time, or tick “Book anyway (double booking)”.",
+            f"{doctor_name} already has {clash.patient.full_name} at that time "
+            f"({time_format(start, 'g:i a')} to {time_format(end, 'g:i a')}). "
+            "Choose another time, or tick “Book anyway (double booking)”.",
         )
 
     # --- saving -------------------------------------------------------------

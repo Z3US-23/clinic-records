@@ -1,6 +1,8 @@
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import dateformat, timezone
 
@@ -81,6 +83,15 @@ class PatientListTests(ClinicTestCase):
                 found = list(response.context["patients"])
                 self.assertEqual(found, [expected])
 
+    def test_search_with_urdu_digits(self):
+        ayesha = self.make_patient(full_name="Ayesha Khan", phone="0300-1234567")
+        self.make_patient(full_name="Bilal Ahmed", phone="0321-7654321")
+        self.login(self.receptionist)
+        for query in ("۰۳۰۰ ۱۲۳۴۵۶۷", "۴۵۶۷"):
+            with self.subTest(query=query):
+                response = self.client.get(LIST_URL, {"q": query})
+                self.assertEqual(list(response.context["patients"]), [ayesha])
+
     def test_search_matches_separate_whatsapp_number(self):
         patient = self.make_patient(phone="0300-1234567", whatsapp_phone="0333 5556667")
         self.login(self.doctor)
@@ -128,6 +139,32 @@ class PatientListTests(ClinicTestCase):
         self.assertContains(response, dateformat.format(local_soon, "j M Y"))
         self.assertContains(response, dateformat.format(local_soon, "g:i a"))
 
+    def test_last_visit_and_next_appointment_with_many_of_each(self):
+        """Regression: both columns came from one JOIN + GROUP BY, which multiplied visits by appointments."""
+        patient = self.make_patient(full_name="Busy Patient")
+        never = self.make_patient(full_name="Aaron Never", phone="0300-7654321")
+        now = timezone.now()
+        latest = now - timedelta(days=2)
+        for when in (now - timedelta(days=40), latest, now - timedelta(days=9)):
+            self.make_visit(patient, visit_date=when)
+        earliest_active = now + timedelta(days=5)
+        self.make_appointment(patient, when=now - timedelta(days=1))  # past
+        self.make_appointment(patient, when=now + timedelta(days=1), status=Appointment.Status.CANCELLED)
+        self.make_appointment(patient, when=now + timedelta(days=2), status=Appointment.Status.NO_SHOW)
+        self.make_appointment(patient, when=now + timedelta(days=3), status=Appointment.Status.COMPLETED)
+        self.make_appointment(patient, when=now + timedelta(days=9))
+        self.make_appointment(patient, when=earliest_active, status=Appointment.Status.CONFIRMED)
+
+        self.login(self.doctor)
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(LIST_URL, {"sort": "last_visit"})
+        self.assertEqual(list(response.context["patients"]), [patient, never])  # no visits: last
+        row = response.context["patients"][0]
+        self.assertEqual(row.last_visit, latest)
+        self.assertEqual(row.next_appointment, earliest_active)
+        self.assertIsNone(response.context["patients"][1].last_visit)
+        self.assertFalse([q["sql"] for q in queries if "GROUP BY" in q["sql"]])
+
     def test_sorting(self):
         old = self.make_patient(full_name="Zara Visitor")
         new = self.make_patient(full_name="Adam Newcomer")
@@ -165,6 +202,15 @@ class PatientListTests(ClinicTestCase):
         response = self.client.get(LIST_URL, {"archived": "1"})
         self.assertContains(response, patient.get_absolute_url())
         self.assertNotContains(response, f'{reverse("appointments:create")}?patient={patient.pk}')
+
+    def test_patient_without_a_mobile_is_listed_and_searchable(self):
+        patient = self.make_patient(full_name="Nasreen Bibi", phone="")
+        self.login(self.receptionist)
+        response = self.client.get(LIST_URL)
+        self.assertEqual(list(response.context["patients"]), [patient])
+        self.assertContains(response, '<td data-label="Phone" class="nowrap"><span class="subtle">—</span></td>')
+        self.assertEqual(list(self.client.get(LIST_URL, {"q": "nasreen"}).context["patients"]), [patient])
+        self.assertEqual(self.client.get(SEARCH_URL, {"q": "nasreen"}).json()["results"][0]["phone"], "")
 
     def test_search_json_is_get_only(self):
         self.login(self.doctor)

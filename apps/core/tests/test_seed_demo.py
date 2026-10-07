@@ -1,9 +1,11 @@
-from datetime import timedelta
+from datetime import UTC, datetime, time, timedelta
 from io import StringIO
+from unittest import mock
 
 from django.conf import settings
 from django.core.management import CommandError, call_command
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Clinic, Membership, User
 from apps.appointments.models import Appointment
@@ -14,7 +16,7 @@ from apps.core.testing import make_user
 from apps.patients.models import Patient
 from apps.reminders.models import Reminder
 
-from .base import CoreTestCase
+from .base import KARACHI, CoreTestCase
 
 Status = Appointment.Status
 
@@ -23,6 +25,18 @@ def seed(*args):
     out = StringIO()
     call_command("seed_demo", *args, stdout=out)
     return out.getvalue()
+
+
+def clinic_time_today(hour, minute=0):
+    """Today at hour:minute in Lahore, as the UTC moment the server's clock would show."""
+    today = timezone.localdate(timezone.now(), KARACHI)
+    return datetime.combine(today, time(hour, minute), tzinfo=KARACHI).astimezone(UTC)
+
+
+def seed_at(moment, *args):
+    """Run seed_demo as if the clock showed `moment`."""
+    with mock.patch("django.utils.timezone.now", return_value=moment):
+        return seed(*args)
 
 
 def other_clinics_snapshot():
@@ -41,18 +55,24 @@ def other_clinics_snapshot():
 
 
 class SeedDemoTests(CoreTestCase):
-    """The default-size demo: one run shared by the checks below (seeding takes a few seconds)."""
+    """The default-size demo: one run shared by the checks below (seeding takes a few seconds).
+
+    Seeded at 4 pm clinic time, so the counts of today's appointments don't depend on when the
+    tests run (see SeedDemoClockTests for other times of day).
+    """
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.output = seed()
+        cls.output = seed_at(clinic_time_today(16))
         cls.demo = Clinic.objects.get(slug=DEMO_SLUG)
 
     def test_clinic_and_logins(self):
         self.assertEqual(self.demo.name, "Demo Family Clinic")
         self.assertEqual((self.demo.city, self.demo.timezone, self.demo.country), ("Lahore", "Asia/Karachi", "PK"))
         self.assertTrue(self.demo.phone and self.demo.prescription_header and self.demo.prescription_footer)
+        # The printed prescription shows clinic.phone itself: the header must not repeat it.
+        self.assertNotIn(self.demo.phone, self.demo.prescription_header)
         roles = {m.user.email: m for m in self.demo.memberships.select_related("user")}
         self.assertEqual(set(roles), set(DEMO_EMAILS))
         owner = roles["demo-owner@clinic.test"]
@@ -76,7 +96,7 @@ class SeedDemoTests(CoreTestCase):
         self.assertEqual(patients.count(), 60)
         for patient in patients:
             with self.subTest(patient=patient.full_name):
-                if patient.phone != "Not given":
+                if patient.phone:
                     self.assertTrue(patient.phone.startswith("0390-"))
                 if patient.whatsapp_phone:
                     self.assertTrue(patient.whatsapp_phone.startswith("0390-"))
@@ -132,10 +152,16 @@ class SeedDemoTests(CoreTestCase):
             self.assertTrue(appointment.visits.exists(), "a 'Seen' appointment has its visit")
         reschedule = today.get(status=Status.RESCHEDULE_REQUESTED)
         self.assertTrue(reschedule.patient_note)
+        self.assertEqual(
+            set(today.values_list("status", flat=True)),
+            {Status.COMPLETED, Status.NO_SHOW, Status.ARRIVED, Status.SCHEDULED, Status.CONFIRMED, Status.RESCHEDULE_REQUESTED},
+        )
         self.assertEqual({a.doctor_id for a in today if a.doctor_id}, {m.user_id for m in self.demo.memberships.filter(role__in=Membership.CLINICAL_ROLES)})
 
         tomorrow = Appointment.objects.filter(clinic=self.demo, scheduled_at__date=self.today + timedelta(days=1)).exclude(status=Status.CANCELLED)
         self.assertTrue(6 <= tomorrow.count() <= 8)
+        # One patient asked for another time, so the Today page's call-back card is never empty in a demo.
+        self.assertEqual(tomorrow.filter(status=Status.RESCHEDULE_REQUESTED).count(), 1)
         later = Appointment.objects.filter(
             clinic=self.demo, scheduled_at__date__gt=self.today + timedelta(days=1),
             scheduled_at__date__lte=self.today + timedelta(days=14),
@@ -164,11 +190,63 @@ class SeedDemoTests(CoreTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.context["stats"]["waiting"], 2)
                 self.assertGreater(response.context["stats"]["missed_follow_ups"], 0)
+                self.assertGreaterEqual(len(response.context["asking_new_time"]), 1)
 
     def test_running_again_without_reset_is_refused(self):
         with self.assertRaisesMessage(CommandError, "--reset"):
             seed()
         self.assertEqual(Clinic.objects.filter(slug=DEMO_SLUG).count(), 1)
+
+
+class SeedDemoClockTests(CoreTestCase):
+    """Whenever the demo is seeded, nothing has happened in the future and nothing to come is overdue."""
+
+    def check_timeline(self, now):
+        demo = Clinic.objects.get(slug=DEMO_SLUG)
+        appointments = Appointment.objects.filter(clinic=demo)
+        self.assertFalse(Visit.objects.filter(clinic=demo, visit_date__gt=now).exists(), "a visit in the future")
+        self.assertFalse(
+            appointments.filter(status__in=[Status.COMPLETED, Status.NO_SHOW], scheduled_at__gt=now).exists(),
+            "seen / did not come before the appointment time",
+        )
+        self.assertFalse(appointments.filter(status=Status.ARRIVED, updated_at__gt=now).exists(), "arrived in the future")
+        self.assertEqual(appointments.filter(status=Status.ARRIVED).count(), 2)
+        today_start = datetime.combine(timezone.localdate(now, KARACHI), time.min, tzinfo=KARACHI)
+        self.assertFalse(
+            appointments.filter(
+                status__in=[Status.SCHEDULED, Status.CONFIRMED, Status.RESCHEDULE_REQUESTED],
+                scheduled_at__gte=today_start, scheduled_at__lt=now,
+            ).exists(),
+            "an appointment still marked as to come, though its time has passed",
+        )
+        self.assertFalse(Patient.objects.filter(clinic=demo, created_at__gt=now).exists(), "registered in the future")
+        for appointment in appointments.filter(status=Status.COMPLETED, scheduled_at__gte=today_start):
+            self.assertTrue(appointment.visits.exists(), "a 'Seen' appointment has its visit")
+        return appointments.filter(scheduled_at__gte=today_start, scheduled_at__lt=today_start + timedelta(days=1))
+
+    def test_early_morning_nobody_seen_yet(self):
+        now = clinic_time_today(8, 5)
+        seed_at(now, "--patients", "20")
+        today = self.check_timeline(now)
+        self.assertFalse(today.filter(status__in=[Status.COMPLETED, Status.NO_SHOW]).exists())
+
+    def test_noon(self):
+        now = clinic_time_today(12)
+        seed_at(now, "--patients", "20")
+        self.check_timeline(now)
+
+    def test_afternoon(self):
+        now = clinic_time_today(16)
+        seed_at(now, "--patients", "20")
+        today = self.check_timeline(now)
+        self.assertTrue(today.filter(status=Status.COMPLETED).exists())
+        self.assertTrue(today.filter(status=Status.SCHEDULED).exists() or today.filter(status=Status.CONFIRMED).exists())
+
+    def test_late_evening_everyone_seen(self):
+        now = clinic_time_today(22, 41)
+        seed_at(now, "--patients", "20")
+        today = self.check_timeline(now)
+        self.assertFalse(today.filter(status__in=[Status.SCHEDULED, Status.CONFIRMED, Status.RESCHEDULE_REQUESTED]).exists())
 
 
 class SeedDemoResetTests(CoreTestCase):

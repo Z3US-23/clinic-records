@@ -17,6 +17,7 @@ from django.utils.formats import date_format, time_format
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
+from apps.accounts.models import Membership
 from apps.core.audit import Action, log_action
 from apps.core.permissions import clinic_required
 from apps.patients.models import Patient
@@ -78,6 +79,19 @@ def _when_text(dt):
     return f"{date_format(local, 'j M Y')} at {time_format(local, 'g:i a')}"
 
 
+def _default_doctor(request, doctors):
+    """The doctor a new booking starts with when the link does not choose one.
+
+    A clinic with one doctor: that doctor. A doctor booking in a bigger clinic: themselves.
+    Anyone else (an owner may be the manager, not a doctor seeing patients): "Any doctor".
+    """
+    if len(doctors) == 1:
+        return doctors[0]
+    if request.membership.role == Membership.Role.DOCTOR:
+        return next((d for d in doctors if d.pk == request.user.pk), None)
+    return None
+
+
 # --- day & week schedule ------------------------------------------------------
 
 
@@ -91,7 +105,7 @@ def day_view(request):
     doctor = _pick_doctor(request.GET.get("doctor"), doctors)
 
     start, end = scheduling.day_range(day)
-    appointments = (
+    appointments = list(
         Appointment.objects.filter(clinic=clinic, scheduled_at__gte=start, scheduled_at__lt=end)
         .select_related("patient", "doctor")
         .prefetch_related(
@@ -103,25 +117,29 @@ def day_view(request):
         )
         .order_by("scheduled_at", "pk")
     )
+    # Waiting room: first come, first served. Tokens are numbered across the whole clinic
+    # (before the doctor filter), so they match the dashboard.
+    waiting = scheduling.waiting_room(appointments)
     if doctor is not None:
-        appointments = appointments.filter(doctor=doctor)
-    appointments = list(appointments)
+        appointments = [a for a in appointments if a.doctor_id == doctor.pk]
+        waiting = [a for a in waiting if a.doctor_id == doctor.pk]
 
     for appointment in appointments:
         appointment.doctor_name = (
             names.get(appointment.doctor_id, appointment.doctor.full_name) if appointment.doctor else ""
         )
         appointment.reminder = appointment.appointment_reminders[0] if appointment.appointment_reminders else None
-        # Only booked / confirmed appointments get a reminder; for the others "Not yet" would mislead.
-        appointment.reminder_expected = appointment.status in (Status.SCHEDULED, Status.CONFIRMED)
+        # Only booked / confirmed appointments of patients who agreed to reminders get one;
+        # for the others "Not yet" would mislead.
+        remindable = appointment.status in reminder_services.REMINDABLE_STATUSES
+        appointment.reminders_off = remindable and not reminder_services.wants_reminders(appointment.patient)
+        appointment.reminder_expected = remindable and not appointment.reminders_off
 
     counts = Counter(a.status for a in appointments)
     status_chips = [
         {"status": value, "label": label, "count": counts.get(value, 0)}
         for value, label in appt_status.STATUS_LABELS.items()
     ]
-    # Waiting room: patients who have arrived, first come first served.
-    waiting = sorted((a for a in appointments if a.status == Status.ARRIVED), key=lambda a: (a.updated_at, a.pk))
     # Schedule: by time, cancelled ones last.
     schedule = [a for a in appointments if a.status != Status.CANCELLED] + [
         a for a in appointments if a.status == Status.CANCELLED
@@ -241,12 +259,18 @@ def create_view(request):
         "date": scheduling.parse_date(request.GET.get("date"), default=timezone.localdate()),
         "duration_minutes": clinic.default_appointment_minutes,
     }
-    doctor = _pick_doctor(request.GET.get("doctor"), list(clinic.doctors))
+    doctors = list(clinic.doctors)
+    doctor = _pick_doctor(request.GET.get("doctor"), doctors) or _default_doctor(request, doctors)
     if doctor is not None:
         initial["doctor"] = doctor.pk
 
     form = AppointmentForm(request.POST if request.method == "POST" else None, clinic=clinic, initial=initial)
     if form.is_valid():
+        if form.cleaned_data.get("walk_in") and _waiting_today(clinic, patient):
+            # "Patient is here now" sent twice (a double tap, the browser re-sending the form):
+            # they are already in the waiting room, so don't give them a second token.
+            messages.info(request, f"{patient.full_name} is already in the waiting room.")
+            return redirect(day_url(timezone.localdate()))
         appointment = form.save(commit=False)
         appointment.clinic = clinic
         appointment.patient = patient
@@ -270,6 +294,14 @@ def create_view(request):
         "cancel_url": day_url(initial["date"]),
     }
     return render(request, "appointments/form.html", context)
+
+
+def _waiting_today(clinic, patient):
+    """Is this patient already marked "Arrived" today (in the waiting room)?"""
+    start, end = scheduling.day_range(timezone.localdate())
+    return Appointment.objects.filter(
+        clinic=clinic, patient=patient, status=Status.ARRIVED, scheduled_at__gte=start, scheduled_at__lt=end
+    ).exists()
 
 
 @clinic_required

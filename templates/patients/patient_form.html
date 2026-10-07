@@ -38,7 +38,7 @@
               <a href="{{ other.get_absolute_url }}" target="_blank" rel="noopener">{{ other.full_name }}</a>
               <span>· {{ other.mrn }}</span>
               {% if other.age_display %}<span>· {{ other.age_display }}</span>{% endif %}
-              <span>· {{ other.phone }}</span>
+              {% if other.phone %}<span>· {{ other.phone }}</span>{% endif %}
             </li>
           {% endfor %}
         </ul>

@@ -1,6 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -20,8 +22,10 @@ CLINICAL_STRINGS = [
     "Severe headache",  # presenting complaint
     "Migraine",  # diagnosis
     "Tab. Sumatriptan",  # prescription
+    "When needed",  # prescription details
     "HbA1c",  # lab test
     "Latest vitals",
+    "Last prescription",
     "Print prescription",
 ]
 
@@ -58,7 +62,7 @@ class PatientDetailTests(ClinicTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["tab"], "history")
         for text in ["Penicillin", "Diabetes type 2", "B+", "Severe headache", "Migraine", "HbA1c", "Abnormal",
-                     "BP 130/85", "Pulse 78", "Temp 37.2 °C", "1 medicine", "Tab. Sumatriptan 50mg"]:
+                     "BP 130/85", "Pulse 78", "Temp 37.2 °C (99.0 °F)", "Tab. Sumatriptan 50mg", "When needed"]:
             self.assertContains(response, text)
         self.assertContains(response, reverse("clinical:visit_detail", args=[self.visit.pk]))
         self.assertContains(response, reverse("clinical:prescription_print", args=[self.visit.pk]))
@@ -95,6 +99,7 @@ class PatientDetailTests(ClinicTestCase):
                     self.assertNotContains(response, text)
                 self.assertNotContains(response, reverse("clinical:visit_create", args=[self.patient.pk]))
                 self.assertNotContains(response, reverse("clinical:lab_create", args=[self.patient.pk]))
+                self.assertNotContains(response, reverse("clinical:lab_delete", args=[self.lab.pk]))
                 self.assertNotContains(response, reverse("patients:archive", args=[self.patient.pk]))
 
     def test_receptionist_default_tab_is_appointments(self):
@@ -214,6 +219,49 @@ class PatientDetailTests(ClinicTestCase):
         self.login(self.doctor)
         self.assertContains(self.client.get(self.url), "No known allergies")
 
+    def test_patient_without_a_mobile(self):
+        self.patient.phone = ""
+        self.patient.save()
+        self.login(self.receptionist)
+        response = self.client.get(self.url)
+        self.assertContains(response, '<dd><span class="subtle">Not given</span></dd>')
+        self.assertNotContains(response, 'href="tel:')
+        self.assertContains(response, "Reminders off")
+
+
+class LabsTabTests(ClinicTestCase):
+    """Every lab result can be deleted from the patient's Lab results tab, including ones without a visit."""
+
+    def setUp(self):
+        self.patient = self.make_patient()
+        self.lab = LabResult.objects.create(clinic=self.clinic, patient=self.patient, test_name="Lipid profile")
+        self.url = reverse("patients:detail", args=[self.patient.pk])
+        self.delete_url = reverse("clinical:lab_delete", args=[self.lab.pk])
+
+    def test_lab_without_a_visit_has_a_delete_button(self):
+        self.assertIsNone(self.lab.visit)
+        for user in (self.doctor, self.owner):
+            with self.subTest(user=user):
+                self.login(user)
+                response = self.client.get(self.url, {"tab": "labs"})
+                self.assertContains(response, f'action="{self.delete_url}"')
+                self.assertContains(response, 'data-confirm="Delete this lab result? This can\'t be undone."')
+                self.assertContains(response, 'aria-label="Delete lab result Lipid profile"')
+
+    def test_delete_from_the_tab_comes_back_to_the_tab(self):
+        self.login(self.doctor)
+        response = self.client.post(self.delete_url)
+        self.assertRedirects(response, f"{self.url}?tab=labs", fetch_redirect_response=False)
+        self.assertFalse(LabResult.objects.filter(pk=self.lab.pk).exists())
+
+    def test_receptionist_sees_no_delete_button_and_cannot_delete(self):
+        self.login(self.receptionist)
+        for tab in ("labs", "appointments"):
+            with self.subTest(tab=tab):
+                self.assertNotContains(self.client.get(self.url, {"tab": tab}), self.delete_url)
+        self.assertEqual(self.client.post(self.delete_url).status_code, 403)
+        self.assertTrue(LabResult.objects.filter(pk=self.lab.pk).exists())
+
 
 class ClinicalSummaryTests(ClinicTestCase):
     def setUp(self):
@@ -231,13 +279,45 @@ class ClinicalSummaryTests(ClinicTestCase):
         self.assertEqual(summary["vitals_visit"], with_vitals)
         self.assertEqual(summary["vitals"], ["Pulse 88", "SpO₂ 97%"])
 
-    def test_current_medicines_from_latest_visit_with_any(self):
+    def test_last_prescription_comes_from_latest_visit_with_any(self):
         older = self.make_visit(self.patient, visit_date=timezone.now() - timedelta(days=10))
         PrescriptionItem.objects.create(visit=older, medicine="Tab. Metformin 500mg")
         self.make_visit(self.patient, visit_date=timezone.now() - timedelta(days=1))
         summary = self.summary()
         self.assertEqual(summary["medicines_visit"], older)
         self.assertEqual([m.medicine for m in summary["medicines"]], ["Tab. Metformin 500mg"])
+        self.assertEqual(summary["medicines_days_ago"], 10)
+
+    def test_card_says_last_prescription_not_current_medicines(self):
+        """Regression: a finished 5-day course was shown under 'Current medicines'."""
+        visit = self.make_visit(self.patient)
+        PrescriptionItem.objects.create(visit=visit, medicine="Tab. Paracetamol 500mg")
+        response = self.client.get(self.url)
+        self.assertContains(response, "Last prescription")
+        self.assertNotContains(response, "Current medicines")
+
+    def test_prescription_details_read_like_the_visit_page(self):
+        visit = self.make_visit(self.patient)
+        PrescriptionItem.objects.create(
+            visit=visit, medicine="ORS sachet", dose="1 sachet", frequency="After every loose stool",
+            duration="Until stools settle",
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, "1 sachet · After every loose stool · Until stools settle")
+        self.assertNotContains(response, "for Until")
+
+    def test_old_prescription_gets_a_check_note(self):
+        visit = self.make_visit(self.patient, visit_date=timezone.now() - timedelta(days=62))
+        PrescriptionItem.objects.create(visit=visit, medicine="Syp. Amoxicillin")
+        response = self.client.get(self.url)
+        self.assertTrue(response.context["summary"]["medicines_old"])
+        self.assertContains(response, "Prescribed 62 days ago. Check whether the patient still takes these.")
+
+        recent = self.make_visit(self.patient, visit_date=timezone.now() - timedelta(days=3))
+        PrescriptionItem.objects.create(visit=recent, medicine="Tab. Cetirizine")
+        response = self.client.get(self.url)
+        self.assertFalse(response.context["summary"]["medicines_old"])
+        self.assertNotContains(response, "Check whether the patient still takes these")
 
     def test_follow_up_overdue(self):
         self.make_visit(
@@ -262,6 +342,34 @@ class ClinicalSummaryTests(ClinicTestCase):
         )
         self.make_appointment(self.patient, when=timezone.now() + timedelta(days=1), status=Appointment.Status.CANCELLED)
         self.assertEqual(self.summary()["follow_up"]["state"], "overdue")
+
+    def test_an_old_booking_nobody_closed_is_not_booked(self):
+        """A past Booked appointment the patient never came to leaves the follow-up overdue."""
+        self.make_visit(
+            self.patient, visit_date=timezone.now() - timedelta(days=20),
+            follow_up_date=timezone.localdate() - timedelta(days=5),
+        )
+        self.make_appointment(self.patient, when=timezone.now() - timedelta(days=4))
+        self.assertEqual(self.summary()["follow_up"]["state"], "overdue")
+
+    def test_wanting_another_time_is_not_booked(self):
+        self.make_visit(
+            self.patient, visit_date=timezone.now() - timedelta(days=20),
+            follow_up_date=timezone.localdate() - timedelta(days=3),
+        )
+        self.make_appointment(
+            self.patient, when=timezone.now() + timedelta(days=1), status=Appointment.Status.RESCHEDULE_REQUESTED
+        )
+        self.assertEqual(self.summary()["follow_up"]["state"], "overdue")
+
+    def test_a_later_appointment_they_came_to_counts_as_came_back(self):
+        self.make_visit(
+            self.patient, visit_date=timezone.now() - timedelta(days=20),
+            follow_up_date=timezone.localdate() - timedelta(days=3),
+        )
+        self.make_appointment(self.patient, when=timezone.now() - timedelta(hours=1), status=Appointment.Status.ARRIVED)
+        self.assertEqual(self.summary()["follow_up"]["state"], "came_back")
+        self.assertContains(self.client.get(self.url), "Came back")
 
     def test_the_visits_own_appointment_does_not_count_as_coming_back(self):
         # Patient was seen a few minutes before their booked slot; the follow-up is now overdue.
@@ -306,6 +414,44 @@ class HistoryTimelineTests(ClinicTestCase):
         entries, total = history_timeline(patient, {}, limit=2)
         self.assertEqual(len(entries), 2)
         self.assertEqual(total, 4)
+
+    def test_each_visit_lists_its_medicines(self):
+        """Regression: the timeline only said "2 medicines", so the doctor had to open every visit."""
+        patient = self.make_patient()
+        older = self.make_visit(patient, visit_date=timezone.now() - timedelta(days=40))
+        PrescriptionItem.objects.create(
+            visit=older, medicine="Tab. Amoxicillin 500mg", dose="1 tablet", frequency="1+1+1", duration="5 days"
+        )
+        PrescriptionItem.objects.create(visit=older, medicine="Syp. Brufen", order=1)
+        newer = self.make_visit(patient, visit_date=timezone.now() - timedelta(days=2))
+        PrescriptionItem.objects.create(visit=newer, medicine="Tab. Cetirizine 10mg")
+
+        self.login(self.doctor)
+        response = self.client.get(reverse("patients:detail", args=[patient.pk]), {"tab": "history"})
+        # The older visit's medicines are not in the Clinical summary (it shows the last prescription only).
+        self.assertEqual([m.medicine for m in response.context["summary"]["medicines"]], ["Tab. Cetirizine 10mg"])
+        self.assertContains(response, "Tab. Amoxicillin 500mg")
+        self.assertContains(response, "1 tablet · 1+1+1 · 5 days")
+        self.assertContains(response, "Syp. Brufen")
+
+        self.login(self.receptionist)
+        response = self.client.get(reverse("patients:detail", args=[patient.pk]), {"tab": "history"})
+        for medicine in ("Amoxicillin", "Brufen", "Cetirizine"):
+            self.assertNotContains(response, medicine)
+
+    def test_history_queries_do_not_grow_with_the_number_of_visits(self):
+        def history_queries(visit_count):
+            patient = self.make_patient(full_name=f"Patient {visit_count}", phone=f"0300-12345{visit_count:02d}")
+            for days in range(visit_count):
+                visit = self.make_visit(patient, visit_date=timezone.now() - timedelta(days=days + 1))
+                PrescriptionItem.objects.create(visit=visit, medicine=f"Medicine {days}")
+            with CaptureQueriesContext(connection) as queries:
+                response = self.client.get(reverse("patients:detail", args=[patient.pk]), {"tab": "history"})
+            self.assertEqual(len(response.context["timeline"]), visit_count)
+            return len(queries)
+
+        self.login(self.doctor)
+        self.assertEqual(history_queries(2), history_queries(10))
 
     def test_cap_note_on_page(self):
         patient = self.make_patient()

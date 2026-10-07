@@ -68,8 +68,8 @@
               <td data-label="Type">
                 <div>
                   <span class="badge {{ r.kind|badge_class }}">{{ r.get_kind_display }}</span>
-                  {% if r.appointment_at %}
-                    <div class="muted small nowrap">Appointment {{ r.appointment_at|date:"j M" }}, {{ r.appointment_at|time:"g:i a" }}</div>
+                  {% if r.appointment %}
+                    <div class="muted small nowrap">Appointment {{ r.appointment.scheduled_at|date:"j M" }}, {{ r.appointment.scheduled_at|time:"g:i a" }}</div>
                   {% elif r.follow_up_on %}
                     <div class="muted small nowrap">Follow-up {{ r.follow_up_on|date:"j M" }}</div>
                   {% endif %}
@@ -84,6 +84,8 @@
                     <span class="nowrap">{% if r.due_date == today %}Today{% else %}{{ r.due_date|date:"j M Y" }}{% endif %}</span>
                     {% if r.status == "pending" and r.days_late %}
                       <div><span class="badge badge-danger">{{ r.days_late }} day{{ r.days_late|pluralize }} late</span></div>
+                    {% elif r.status == "skipped" and r.skip_reason %}
+                      <div class="muted small">{{ r.get_skip_reason_display }}</div>
                     {% endif %}
                   {% endif %}
                 </div>
@@ -97,8 +99,8 @@
               <td data-label="" class="rm-actions-cell">
                 <div class="btn-group rm-actions">
                   {% if r.status == "pending" %}
-                    {% if r.patient.is_archived %}
-                      <span class="badge badge-muted">Patient archived</span>
+                    {% if r.send_blocker %}
+                      <span class="muted small rm-send-blocker">{{ r.send_blocker }}</span>
                     {% elif r.has_whatsapp %}
                       <form method="post" action="{% url 'reminders:send' r.pk %}" class="inline-form" data-wa-send>
                         {% csrf_token %}
@@ -106,7 +108,7 @@
                         <button type="submit" class="btn btn-whatsapp btn-sm">{% include "includes/icon.html" with name="whatsapp" size="sm" %}Send on WhatsApp</button>
                       </form>
                     {% else %}
-                      {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient call_number=r.call_number %}
+                      {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient %}
                     {% endif %}
                     <a class="btn btn-ghost btn-sm" href="{% url 'reminders:update' r.pk %}?next={{ back_url|urlencode }}">{% include "includes/icon.html" with name="edit" size="sm" %}Edit</a>
                     <form method="post" action="{% url 'reminders:skip' r.pk %}" class="inline-form" data-confirm="Skip this reminder? It will not be sent.">
@@ -115,14 +117,17 @@
                       <button type="submit" class="btn btn-ghost btn-sm">{% include "includes/icon.html" with name="skip" size="sm" %}Skip</button>
                     </form>
                   {% elif r.status == "sent" %}
-                    {% if r.has_whatsapp and not r.patient.is_archived %}
-                      <form method="post" action="{% url 'reminders:send' r.pk %}" class="inline-form" data-wa-send>
-                        {% csrf_token %}
-                        <input type="hidden" name="next" value="{{ back_url }}">
-                        <button type="submit" class="btn btn-secondary btn-sm">{% include "includes/icon.html" with name="repeat" size="sm" %}Send again</button>
-                      </form>
-                    {% elif not r.patient.is_archived %}
-                      {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient call_number=r.call_number %}
+                    {# No "Send again" once it can't be sent (opted out, archived, appointment over or cancelled). #}
+                    {% if not r.send_blocker %}
+                      {% if r.has_whatsapp %}
+                        <form method="post" action="{% url 'reminders:send' r.pk %}" class="inline-form" data-wa-send>
+                          {% csrf_token %}
+                          <input type="hidden" name="next" value="{{ back_url }}">
+                          <button type="submit" class="btn btn-secondary btn-sm">{% include "includes/icon.html" with name="repeat" size="sm" %}Send again</button>
+                        </form>
+                      {% else %}
+                        {% include "reminders/_no_whatsapp_actions.html" with patient=r.patient %}
+                      {% endif %}
                     {% endif %}
                   {% elif not r.patient.is_archived %}
                     <a class="btn btn-ghost btn-sm" href="{% url 'reminders:create' %}?patient={{ r.patient.pk }}">{% include "includes/icon.html" with name="message" size="sm" %}New message</a>

@@ -25,6 +25,10 @@ class Reminder(models.Model):
         WHATSAPP_API = "whatsapp_api", "WhatsApp (automatic)"
         SMS = "sms", "SMS"
 
+    class SkipReason(models.TextChoices):
+        STAFF = "staff", "Skipped by staff"
+        SYSTEM = "system", "No longer needed"
+
     clinic = models.ForeignKey("accounts.Clinic", on_delete=models.CASCADE, related_name="reminders")
     patient = models.ForeignKey("patients.Patient", on_delete=models.CASCADE, related_name="reminders")
     appointment = models.ForeignKey(
@@ -38,6 +42,11 @@ class Reminder(models.Model):
     due_date = models.DateField(help_text="Day the reminder should go out")
     message = models.TextField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Who skipped it. A reminder the SYSTEM skipped (e.g. the booking was cancelled, the
+    # patient opted out) comes back by itself when it is needed again; one skipped by
+    # STAFF never does. Blank otherwise, and on rows skipped before this was recorded
+    # (those are treated like staff skips, so they never come back unexpectedly).
+    skip_reason = models.CharField(max_length=10, choices=SkipReason.choices, blank=True)
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.WHATSAPP_LINK)
 
     sent_at = models.DateTimeField(null=True, blank=True)

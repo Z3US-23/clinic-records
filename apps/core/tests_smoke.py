@@ -26,6 +26,7 @@ from django.urls import get_resolver, reverse
 from django.utils import timezone
 
 from apps.accounts.models import Membership
+from apps.appointments.models import Appointment
 from apps.clinical.models import LabResult, PrescriptionItem
 from apps.clinical.tests.base import TempMediaMixin, upload
 from apps.core.testing import ClinicTestCase, make_appointment, make_patient, make_visit
@@ -64,6 +65,8 @@ class Page:
 PAGES = [
     # --- core ---
     Page("core:dashboard"),
+    Page("core:missed_follow_ups"),
+    Page("core:hide_setup_checklist", access=OWNER, post_only=True),
     Page("core:audit_log", access=OWNER),
     Page("core:export", access=OWNER),
     Page("core:manifest", access=PUBLIC),
@@ -77,11 +80,14 @@ PAGES = [
     Page("accounts:password_change_done"),
     Page("accounts:no_clinic", status=302),  # they do have a clinic, so: Today
     Page("accounts:switch_clinic", args=("clinic",), post_only=True, clinic_record=True),
+    # Someone else's (or a made-up) invitation link: 404, so nothing leaks.
+    Page("accounts:join", args=("invitation",), status=404),
     Page("accounts:profile"),
     Page("accounts:staff_list", access=OWNER),
     Page("accounts:staff_add", access=OWNER),
     Page("accounts:staff_edit", args=("membership",), access=OWNER, clinic_record=True),
     Page("accounts:staff_set_password", args=("membership",), access=OWNER, clinic_record=True),
+    Page("accounts:staff_invite", args=("membership",), access=OWNER, post_only=True, clinic_record=True),
     Page("accounts:clinic_settings", access=OWNER),
     # --- patients ---
     Page("patients:list"),
@@ -107,6 +113,7 @@ PAGES = [
     Page("clinical:prescription_print", args=("visit",), access=CLINICIANS, clinic_record=True),
     Page("clinical:lab_create", args=("patient",), access=CLINICIANS, clinic_record=True),
     Page("clinical:lab_create", args=("patient",), query="?visit={visit}", access=CLINICIANS, clinic_record=True),
+    Page("clinical:lab_update", args=("lab",), access=CLINICIANS, clinic_record=True),
     Page("clinical:lab_file", args=("lab_with_file",), access=CLINICIANS, clinic_record=True),
     Page("clinical:lab_file", args=("lab",), access=CLINICIANS, clinic_record=True, status=404),  # no file
     Page("clinical:lab_delete", args=("lab",), access=CLINICIANS, post_only=True, clinic_record=True),
@@ -163,6 +170,17 @@ class SmokeTests(TempMediaMixin, ClinicTestCase):
             original_filename="report.pdf",
         )
         cls.appointment = make_appointment(cls.patient, cls.doctor, when=now + timedelta(days=1), reason="Check-up")
+        # Fill Today's "asking for another time" card and the core:missed_follow_ups list, so the
+        # receptionist checks below also cover them.
+        make_appointment(
+            cls.patient, cls.doctor, when=now + timedelta(days=2),
+            status=Appointment.Status.RESCHEDULE_REQUESTED, patient_note="Evening please",
+        )
+        missed = make_patient(cls.clinic, full_name="Smoketest Missed", phone="0300-7654321", allergies="SMOKE-ALLERGY")
+        make_visit(
+            missed, cls.doctor, diagnosis="SMOKE-DIAGNOSIS", visit_date=now - timedelta(days=40),
+            follow_up_date=timezone.localdate() - timedelta(days=10),
+        )
         cls.reminder = Reminder.objects.create(
             clinic=cls.clinic, patient=cls.patient, kind=Reminder.Kind.CUSTOM,
             due_date=timezone.localdate(), message="Hello, please call the clinic.",
@@ -190,6 +208,7 @@ class SmokeTests(TempMediaMixin, ClinicTestCase):
             "membership": self.doctor_membership.pk,
             "clinic": self.clinic.pk,
             "token": self.appointment.confirm_token,
+            "invitation": "not-a-real-invitation",
             "tomorrow": (timezone.localdate() + timedelta(days=1)).isoformat(),
         }
 

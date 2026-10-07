@@ -1,9 +1,12 @@
+{% load core_tags %}
 {% comment %}
 Shown instead of "Send on WhatsApp" when a patient has no usable WhatsApp number.
-Usage: {% include "reminders/_no_whatsapp_actions.html" with patient=p call_number=digits %}
+Usage: {% include "reminders/_no_whatsapp_actions.html" with patient=p %}
 {% endcomment %}
 <span class="badge badge-warning">No WhatsApp number</span>
-{% if call_number %}
-  <a class="btn btn-secondary btn-sm" href="tel:{{ call_number }}">{% include "includes/icon.html" with name="phone" size="sm" %}Call</a>
-{% endif %}
+{% with tel=patient.phone|tel_href:current_clinic.country %}
+  {% if tel %}
+    <a class="btn btn-secondary btn-sm" href="{{ tel }}">{% include "includes/icon.html" with name="phone" size="sm" %}Call</a>
+  {% endif %}
+{% endwith %}
 <a class="btn btn-ghost btn-sm" href="{% url 'patients:update' patient.pk %}">{% include "includes/icon.html" with name="edit" size="sm" %}Fix number</a>

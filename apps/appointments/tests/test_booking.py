@@ -8,8 +8,11 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format, time_format
 
+from apps.accounts.models import Membership
 from apps.appointments.models import Appointment
 from apps.core.models import AuditLog
+from apps.core.testing import make_appointment, make_clinic, make_patient, make_user
+from apps.reminders.models import Reminder
 
 from .base import KARACHI, AppointmentTestCase
 
@@ -155,6 +158,23 @@ class CreateAppointmentTests(AppointmentTestCase):
         self.assertTrue(before <= appointment.scheduled_at <= timezone.now())
         self.assertRedirects(response, self.day_url(timezone.localtime(appointment.scheduled_at, KARACHI).date()))
         refresh.assert_called_once()
+
+    def test_walk_in_sent_twice_gives_one_waiting_room_place(self):
+        self.login(self.receptionist)
+        data = self.post_data(walk_in="on", date="", time="")
+        self.client.post(self.url(), data)
+        response = self.client.post(self.url(), data)
+        self.assertRedirects(response, self.day_url(timezone.localdate()), fetch_redirect_response=False)
+        self.assertEqual(Appointment.objects.filter(patient=self.patient, status=Status.ARRIVED).count(), 1)
+        self.assertEqual(AuditLog.objects.filter(action=AuditLog.Action.CREATE).count(), 1)
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertIn(f"{self.patient.full_name} is already in the waiting room.", messages)
+
+    def test_a_patient_seen_earlier_today_can_walk_in_again(self):
+        self.make_appointment(self.patient, when=timezone.now() - timedelta(hours=3), status=Status.COMPLETED)
+        self.login(self.receptionist)
+        self.client.post(self.url(), self.post_data(walk_in="on", date="", time=""))
+        self.assertEqual(Appointment.objects.filter(patient=self.patient, status=Status.ARRIVED).count(), 1)
 
     def test_walk_in_skips_the_double_booking_check(self):
         self.make_appointment(self.make_patient(full_name="Booked Earlier"), when=timezone.now())
@@ -417,3 +437,110 @@ class UpdateAppointmentTests(AppointmentTestCase):
         self.assertEqual(response.status_code, 302)
         self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.doctor, self.doctor)
+
+
+class DefaultDoctorTests(AppointmentTestCase):
+    """Which doctor a new booking starts with in a clinic with several doctors."""
+
+    def url(self):
+        return reverse("appointments:create") + f"?patient={self.patient.pk}&date={self.tomorrow.isoformat()}"
+
+    def test_receptionist_and_owner_start_with_any_doctor(self):
+        for user in (self.receptionist, self.owner):
+            with self.subTest(role=user.email):
+                self.login(user)
+                response = self.client.get(self.url())
+                self.assertIsNone(response.context["form"]["doctor"].value())
+                self.assertContains(response, "Any doctor")
+
+    def test_a_doctor_starts_with_themselves(self):
+        self.login(self.doctor)
+        response = self.client.get(self.url())
+        self.assertEqual(response.context["form"]["doctor"].value(), self.doctor.pk)
+        self.assertContains(response, "Any doctor")  # still a choice
+
+    def test_doctor_in_the_link_wins(self):
+        self.login(self.doctor)
+        response = self.client.get(self.url() + f"&doctor={self.owner.pk}")
+        self.assertEqual(response.context["form"]["doctor"].value(), self.owner.pk)
+
+
+class SoloDoctorClinicTests(AppointmentTestCase):
+    """A clinic with one doctor (the owner) and a receptionist: "Any doctor" means that doctor."""
+
+    def setUp(self):
+        super().setUp()
+        self.solo = make_clinic("Iqbal Clinic")
+        self.solo_doctor = make_user(self.solo, Membership.Role.OWNER, full_name="Sana Iqbal")
+        self.solo_reception = make_user(self.solo, Membership.Role.RECEPTIONIST, full_name="Rubina Desk")
+        self.solo_patient = make_patient(self.solo, full_name="Kamran Ali")
+        self.login(self.solo_reception)
+
+    def url(self, patient=None):
+        patient = patient or self.solo_patient
+        return reverse("appointments:create") + f"?patient={patient.pk}&date={self.tomorrow.isoformat()}"
+
+    def book_with_form_defaults(self, patient=None, time="10:00"):
+        """Open the booking form and send it back with what it suggested, as a browser would."""
+        form = self.client.get(self.url(patient)).context["form"]
+        data = {
+            "date": self.tomorrow.isoformat(),
+            "time": time,
+            "doctor": form["doctor"].value(),
+            "duration_minutes": form["duration_minutes"].value(),
+        }
+        return self.client.post(self.url(patient), data)
+
+    def test_the_only_doctor_is_chosen_and_any_doctor_is_not_offered(self):
+        response = self.client.get(self.url())
+        self.assertEqual(response.context["form"]["doctor"].value(), self.solo_doctor.pk)
+        self.assertNotContains(response, "Any doctor")
+        self.assertContains(response, "Dr. Sana Iqbal")
+
+    def test_second_booking_at_the_same_time_is_a_double_booking(self):
+        self.assertEqual(self.book_with_form_defaults().status_code, 302)
+        other = make_patient(self.solo, full_name="Nadia Hussain")
+        response = self.book_with_form_defaults(patient=other)
+        self.assertEqual(response.status_code, 200)
+        errors = " ".join(response.context["form"].non_field_errors())
+        self.assertIn("Dr. Sana Iqbal already has Kamran Ali", errors)
+        self.assertNotIn("..", errors)  # "10:15 a.m.." read badly
+        self.assertEqual(Appointment.objects.filter(clinic=self.solo).count(), 1)
+
+    def test_booking_sent_without_a_doctor_is_with_the_only_doctor(self):
+        response = self.client.post(self.url(), {
+            "date": self.tomorrow.isoformat(), "time": "10:00", "doctor": "", "duration_minutes": 15,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Appointment.objects.get(clinic=self.solo).doctor, self.solo_doctor)
+
+    def test_an_older_any_doctor_appointment_still_clashes(self):
+        make_appointment(self.solo_patient, doctor=None, when=self.at(self.tomorrow, 10))
+        response = self.book_with_form_defaults(patient=make_patient(self.solo, full_name="Nadia Hussain"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Kamran Ali", " ".join(response.context["form"].non_field_errors()))
+
+    def test_the_reminder_names_the_doctor(self):
+        self.book_with_form_defaults()
+        reminder = Reminder.objects.get(appointment__clinic=self.solo, kind=Reminder.Kind.APPOINTMENT)
+        self.assertIn("with Dr. Sana Iqbal", reminder.message)
+        self.assertNotIn("the doctor", reminder.message)
+
+    def test_editing_an_older_any_doctor_appointment_keeps_it_as_it_was(self):
+        appointment = make_appointment(
+            self.solo_patient, doctor=None, when=self.at(self.tomorrow, 10), status=Status.CONFIRMED,
+            patient_responded_at=timezone.now(),
+        )
+        url = reverse("appointments:update", args=[appointment.pk])
+        response = self.client.get(url)
+        self.assertIsNone(response.context["form"]["doctor"].value())
+        self.assertContains(response, "Any doctor")
+
+        response = self.client.post(url, {
+            "date": self.tomorrow.isoformat(), "time": "10:00", "doctor": "", "duration_minutes": 15,
+            "reason": "Sugar check", "status": Status.CONFIRMED,
+        })
+        self.assertEqual(response.status_code, 302)
+        appointment.refresh_from_db()
+        self.assertEqual(appointment.status, Status.CONFIRMED)  # not treated as rescheduled
+        self.assertIsNotNone(appointment.patient_responded_at)

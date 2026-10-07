@@ -24,8 +24,10 @@ class CurrentClinicMiddleware:
         request.membership = None
 
         if request.user.is_authenticated:
+            # A waiting invitation (accepted_at empty) is always inactive; checking both is a
+            # second lock in case a bulk .update() ever switched one on.
             memberships = Membership.objects.filter(
-                user=request.user, is_active=True, clinic__is_active=True
+                user=request.user, is_active=True, accepted_at__isnull=False, clinic__is_active=True
             ).select_related("clinic", "user")
             membership = None
             chosen = request.session.get(self.SESSION_KEY)

@@ -18,6 +18,8 @@ Safety
     * Only the demo clinic and its three demo users are created, changed or deleted. The command
       refuses to run if a demo email address is used in another clinic, or if a clinic it did not
       create already has the demo clinic's web address (slug).
+    * NEVER RUN IT ON A DATABASE WITH REAL PATIENTS. The demo logins and their password are public
+      (they are printed here and in the README), so anyone could sign in to the demo clinic.
     * Deterministic: the same random seed (42) gives the same patients every time for a given day.
       (Appointment confirmation links stay random: they are secrets.)
 """
@@ -59,10 +61,10 @@ CLINIC_DETAILS = {
     "city": "Lahore",
     "phone": f"{DEMO_PHONE_PREFIX}-0001234",
     "email": "demo-clinic@clinic.test",
+    # Timings only: the prescription prints the clinic's phone number on its own line already.
     "prescription_header": (
         "Mon to Sat: 10:00 am - 1:00 pm and 5:00 pm - 9:00 pm\n"
-        "Sunday: closed\n"
-        f"Phone / WhatsApp: {DEMO_PHONE_PREFIX}-0001234"
+        "Sunday: closed"
     ),
     "prescription_footer": (
         "Please bring this prescription to your next visit. In an emergency, go straight to the nearest "
@@ -538,7 +540,7 @@ class DemoBuilder:
         # One elderly patient has no mobile number, to show how the app copes with that.
         for patient in regular[opted_out_count:]:
             if patient.age >= 60:
-                patient.phone, patient.whatsapp_phone, patient.no_phone = "Not given", "", True
+                patient.phone, patient.whatsapp_phone, patient.no_phone = "", "", True
                 patient.notes = "No mobile number. Ask the son for a contact number when they visit."
                 break
 
@@ -571,27 +573,49 @@ class DemoBuilder:
             return key, data.ENCOUNTERS[key].reason
         return "", "General check-up"
 
-    def plan_today(self, take):
-        """10-12 appointments: some seen already, two waiting, one did not come, one wants another time."""
-        rng, today = self.rng, self.today
-        # Spread around the current time, kept inside clinic hours whenever the command is run.
-        anchor = self.at(today, self.now.hour, self.now.minute - self.now.minute % 15)
-        anchor = min(max(anchor, self.at(today, 13)), self.at(today, 19))
-        schedule = [
-            (Status.COMPLETED, -180), (Status.COMPLETED, -150), (Status.NO_SHOW, -135), (Status.COMPLETED, -120),
-            (Status.ARRIVED, -30), (Status.ARRIVED, -15), (Status.CONFIRMED, 15), (Status.SCHEDULED, 45),
-            (Status.RESCHEDULE_REQUESTED, 60), (Status.CONFIRMED, 90), (Status.SCHEDULED, 120), (Status.SCHEDULED, 150),
-        ]
-        schedule = schedule[: len(schedule) - rng.randint(0, 2)]
+    def todays_slots(self):
+        """10-12 appointment times today, spread around the current time but inside clinic hours."""
+        anchor = self.at(self.today, self.now.hour, self.now.minute - self.now.minute % 15)
+        anchor = min(max(anchor, self.at(self.today, 13)), self.at(self.today, 19))
+        offsets = [-180, -150, -135, -120, -30, -15, 15, 45, 60, 90, 120, 150]
+        offsets = offsets[: len(offsets) - self.rng.randint(0, 2)]
+        return [anchor + timedelta(minutes=offset) for offset in offsets]
 
+    def todays_statuses(self, slots):
+        """What happened to each of today's appointments, decided by comparing its time with now.
+
+        Two patients are in the waiting room, booked for the slots just before now (the doctors run a
+        little late); in the morning, before any slot has passed, the first two slots instead (early).
+        Earlier slots are over: seen, except one who did not come. Later slots are still to come:
+        booked or confirmed, and one patient wants another time. So run at 8 am nobody has been seen
+        yet, and run late in the evening everyone has.
+        """
+        past = [when for when in slots if when < self.now]
+        coming = [when for when in slots if when >= self.now]
+        waiting = past[-2:] if len(past) >= 2 else past + coming[: 2 - len(past)]
+        done = [when for when in past if when not in waiting]
+        to_come = [when for when in coming if when not in waiting]
+
+        done_story = [Status.COMPLETED, Status.COMPLETED, Status.NO_SHOW]  # then everyone else was seen
+        coming_story = [Status.CONFIRMED, Status.SCHEDULED, Status.RESCHEDULE_REQUESTED, Status.CONFIRMED]
+        statuses = {when: Status.ARRIVED for when in waiting}
+        for index, when in enumerate(done):
+            statuses[when] = done_story[index] if index < len(done_story) else Status.COMPLETED
+        for index, when in enumerate(to_come):
+            statuses[when] = coming_story[index] if index < len(coming_story) else Status.SCHEDULED
+        return [statuses[when] for when in slots]
+
+    def plan_today(self, take):
+        """10-12 appointments around now: two waiting, earlier ones over, later ones still to come."""
+        rng, today = self.rng, self.today
+        slots = self.todays_slots()
         planned, arrivals = [], 0
-        for index, (status, offset) in enumerate(schedule):
+        for index, (when, status) in enumerate(zip(slots, self.todays_statuses(slots))):
             chosen = take(1)
             if not chosen:
                 break
             patient = chosen[0]
             encounter, reason = self.booking_reason(patient, today, same_week=True)
-            when = anchor + timedelta(minutes=offset)
             appointment = PlannedAppointment(
                 patient=patient, when=when, doctor=self.doctors[index % 2], status=status, reason=reason
             )
@@ -603,14 +627,18 @@ class DemoBuilder:
                 appointment.responded_at = self.at(self.yesterday, 20, rng.randrange(0, 60, 5))
                 appointment.patient_note = "Can I come tomorrow evening instead? I am stuck at work."
             elif status == Status.ARRIVED:
-                # Arrival order = token order on the dashboard. Never in the future.
+                # Arrival order = token order on the dashboard. Never in the future, never before today.
                 arrivals += 1
                 arrived = min(when - timedelta(minutes=5), self.now - timedelta(minutes=21 - 7 * arrivals))
-                appointment.arrived_at = max(arrived, self.at(today, 0, 1))
+                appointment.arrived_at = min(max(arrived, self.at(today, 0)), self.now)
             elif status == Status.COMPLETED:
                 follow_up = self.follow_up_after(encounter, today)
+                seen_at = min(when + timedelta(minutes=rng.randint(5, 12)), self.now - timedelta(minutes=1))
+                # They sat in the waiting room first, so they hold the earlier token numbers.
+                arrived = min(when - timedelta(minutes=5), seen_at - timedelta(minutes=10))
+                appointment.arrived_at = min(max(arrived, self.at(today, 0)), seen_at)
                 patient.visits.append(PlannedVisit(
-                    when=when + timedelta(minutes=rng.randint(5, 12)), encounter=encounter,
+                    when=seen_at, encounter=encounter,
                     doctor=appointment.doctor, follow_up_date=follow_up, appointment=appointment,
                 ))
             planned.append(appointment)
@@ -635,6 +663,18 @@ class DemoBuilder:
                 appointment.responded_at = self.now - timedelta(minutes=rng.randint(20, 120))
                 appointment.reminder_sent_at = appointment.responded_at - timedelta(minutes=rng.randint(10, 60))
             planned.append(appointment)
+
+        # Another one tapped "I need another time": the Today page asks staff to call them back,
+        # whatever time of day the demo runs.
+        asking = next(
+            (a for a in planned if a.status == Status.SCHEDULED and a.patient.reminders_opt_in and not a.patient.no_phone),
+            None,
+        )
+        if asking is not None:
+            asking.status = Status.RESCHEDULE_REQUESTED
+            asking.responded_at = self.now - timedelta(minutes=rng.randint(30, 90))
+            asking.reminder_sent_at = asking.responded_at - timedelta(minutes=rng.randint(10, 60))
+            asking.patient_note = "Could I come on Saturday morning instead?"
         return planned
 
     def plan_next_two_weeks(self, take, patients):
@@ -768,7 +808,7 @@ class DemoBuilder:
             )
             # Registered on the day of their first visit (created_at is set automatically, so fix it after).
             first = patient.visits[0].when if patient.visits else self.at(patient.registered, 10)
-            patient.obj.created_at = first - timedelta(minutes=15)
+            patient.obj.created_at = min(first - timedelta(minutes=15), self.now)
         Patient.objects.bulk_update([p.obj for p in patients], ["created_at"])
         self.counts["patients"] = len(patients)
 
@@ -784,11 +824,10 @@ class DemoBuilder:
                 status=appointment.status,
                 patient_note=appointment.patient_note,
                 patient_responded_at=appointment.responded_at,
+                # Waiting-room order and tokens (Appointment.save() keeps a time it is given).
+                arrived_at=appointment.arrived_at,
                 created_by=self.receptionist,
             )
-            if appointment.arrived_at:
-                # The dashboard lists the waiting room in arrival order (the time of the last change).
-                Appointment.objects.filter(pk=appointment.obj.pk).update(updated_at=appointment.arrived_at)
 
     def save_visits(self, patients):
         rng = self.rng

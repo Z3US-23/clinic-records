@@ -7,7 +7,7 @@
     <div>
       <div class="breadcrumbs"><a href="{% url 'accounts:staff_list' %}">Staff</a><span>›</span><span>Add</span></div>
       <h1>Add staff member</h1>
-      <p class="subtitle">They will sign in with their email and the password you choose here.</p>
+      <p class="subtitle">They will sign in with their email and the password you choose here, then pick their own.</p>
     </div>
   </div>
 
@@ -43,7 +43,7 @@
     <div class="card">
       <div class="card-header"><h2>Password for their first sign-in</h2></div>
       <div class="card-body stack">
-        <p class="form-hint mb-0">If they already use {{ PRODUCT_NAME }} at another clinic, leave this blank: they keep their existing password.</p>
+        <p class="form-hint mb-0">They will be asked to choose their own password the first time they sign in. If they already use {{ PRODUCT_NAME }} at another clinic, leave this blank: you will get a join link to send them instead, and they join once they accept it.</p>
         <div class="form-grid">
           {% include "includes/field.html" with field=form.password1 %}
           {% include "includes/field.html" with field=form.password2 %}

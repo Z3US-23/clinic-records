@@ -42,6 +42,15 @@ class AppointmentReminderTests(FrozenClockTestCase):
         generate_reminders(self.clinic)
         self.assertIn("with the doctor on", Reminder.objects.get().message)
 
+    def test_any_doctor_in_a_one_doctor_clinic_names_that_doctor(self):
+        solo = make_clinic("Solo Clinic")
+        make_user(solo, Membership.Role.OWNER, full_name="Sana Iqbal")
+        make_user(solo, Membership.Role.RECEPTIONIST)
+        patient = make_patient(solo)
+        make_appointment(patient, None, self.at(self.day(1)))  # booked as "any doctor" before the fix
+        generate_reminders(solo)
+        self.assertIn("with Dr. Sana Iqbal on", Reminder.objects.get(clinic=solo).message)
+
     def test_window_edges(self):
         self.clinic.appointment_reminder_days = 2
         later_today = self.make_appointment(self.patient, when=self.at(self.day(0), 18, 0))
@@ -170,6 +179,14 @@ class FollowUpReminderTests(FrozenClockTestCase):
                 generate_reminders(self.clinic)
                 self.assertEqual(Reminder.objects.filter(kind=ReminderKind.FOLLOW_UP).count(), 1)
 
+    def test_wants_another_time_does_not_count_as_booked(self):
+        # The patient turned that time down, so a "please book a time that suits you" message is right.
+        self.visit(self.day(1))
+        self.make_appointment(self.patient, when=self.at(self.day(1), 12, 0), status=Status.RESCHEDULE_REQUESTED)
+
+        generate_reminders(self.clinic)
+        self.assertEqual(Reminder.objects.filter(kind=ReminderKind.FOLLOW_UP, status=PENDING).count(), 1)
+
     def test_the_visits_own_appointment_does_not_count_as_booked(self):
         # The doctor wrote up the visit a little before the booked time.
         appointment = self.make_appointment(self.patient, when=self.at(self.day(-10), 11, 0), status=Status.COMPLETED)
@@ -225,6 +242,50 @@ class OverdueReminderTests(FrozenClockTestCase):
         generate_reminders(self.clinic)
         self.assertFalse(Reminder.objects.filter(kind=ReminderKind.OVERDUE).exists())
 
+    def missed_with_appointment(self, status, when):
+        """A new patient whose follow-up was due 5 days ago, with one appointment after the visit."""
+        patient = self.make_patient(full_name=f"Patient {status.label}")
+        visit = self.visit(self.day(-5), patient)
+        self.make_appointment(patient, when=when, status=status)
+        return visit
+
+    def test_stale_bookings_do_not_count_as_coming_back(self):
+        """Booked or Confirmed for a day that has passed and never closed, or "Wants another time"."""
+        visits = [
+            self.missed_with_appointment(status, self.at(self.day(-4)))
+            for status in (Status.SCHEDULED, Status.CONFIRMED, Status.RESCHEDULE_REQUESTED)
+        ]
+
+        generate_reminders(self.clinic)
+
+        prepared = Reminder.objects.filter(kind=ReminderKind.OVERDUE, status=PENDING)
+        self.assertEqual(set(prepared.values_list("visit", flat=True)), {visit.pk for visit in visits})
+
+    def test_an_attended_appointment_counts_as_coming_back(self):
+        for status in (Status.ARRIVED, Status.COMPLETED):
+            self.missed_with_appointment(status, self.at(self.day(-4)))
+
+        self.assertEqual(generate_reminders(self.clinic), 0)
+
+    def test_todays_booking_counts_for_the_whole_day(self):
+        # Booked for 8 am; it is 11 am and nobody has marked them yet: they may be running late.
+        self.missed_with_appointment(Status.SCHEDULED, self.at(self.day(0), 8, 0))
+
+        self.assertEqual(generate_reminders(self.clinic), 0)
+
+    def test_a_grace_of_zero_still_waits_until_the_day_after(self):
+        """Nobody is told they missed a check-up on the day it is due, whatever the setting says."""
+        Clinic.objects.filter(pk=self.clinic.pk).update(overdue_grace_days=0)
+        self.clinic.refresh_from_db()
+        self.visit(self.day(0), days_ago=20)
+
+        generate_reminders(self.clinic)
+        self.assertEqual(list(Reminder.objects.values_list("kind", "status")), [(ReminderKind.FOLLOW_UP, PENDING)])
+
+        generate_reminders(self.clinic, today=self.day(1))  # the day after: now it is missed
+        self.assertEqual(Reminder.objects.get(kind=ReminderKind.OVERDUE).status, PENDING)
+        self.assertEqual(Reminder.objects.get(kind=ReminderKind.FOLLOW_UP).status, SKIPPED)
+
     def test_replaces_a_follow_up_reminder_that_was_never_sent(self):
         visit = self.visit(self.day(-3))
         follow_up = self.make_reminder(kind=ReminderKind.FOLLOW_UP, visit=visit, due_date=self.day(-5))
@@ -265,6 +326,22 @@ class IdempotencyTests(FrozenClockTestCase):
 
         self.assertEqual(generate_reminders(self.clinic), 0)
         self.assertEqual(Reminder.objects.count(), 3)
+
+    def test_reminders_skipped_by_staff_are_not_prepared_again(self):
+        generate_reminders(self.clinic)
+        Reminder.objects.update(status=SKIPPED, skip_reason=Reminder.SkipReason.STAFF)
+
+        self.assertEqual(generate_reminders(self.clinic), 0)
+        self.assertFalse(Reminder.objects.filter(status=PENDING).exists())
+
+    def test_reminders_skipped_by_the_system_come_back_once_and_are_not_duplicated(self):
+        generate_reminders(self.clinic)
+        Reminder.objects.update(status=SKIPPED, skip_reason=Reminder.SkipReason.SYSTEM)
+
+        self.assertEqual(generate_reminders(self.clinic), 3)  # still needed, so brought back
+        self.assertEqual(generate_reminders(self.clinic), 0)
+        self.assertEqual(Reminder.objects.count(), 3)
+        self.assertEqual(set(Reminder.objects.values_list("status", "skip_reason")), {(PENDING, "")})
 
     def test_a_duplicate_insert_is_ignored_not_raised(self):
         """Two requests generating at the same moment: the unique constraint wins quietly."""
@@ -336,6 +413,22 @@ class StaleReminderTests(FrozenClockTestCase):
 
         self.assertFalse(Reminder.objects.filter(status=PENDING).exists())
         self.assertEqual(Reminder.objects.filter(status=SKIPPED).count(), 2)
+        self.assertEqual(set(Reminder.objects.values_list("skip_reason", flat=True)), {Reminder.SkipReason.SYSTEM})
+
+    def test_a_stale_past_booking_does_not_skip_follow_up_reminders(self):
+        """A booking for a day that has passed, never marked Seen or Did not come, is not "coming back"."""
+        due_soon = self.make_patient(full_name="Due Soon")
+        missed = self.make_patient(full_name="Missed It")
+        self.make_visit(due_soon, visit_date=self.at(self.day(-20)), follow_up_date=self.day(1))
+        self.make_visit(missed, visit_date=self.at(self.day(-20)), follow_up_date=self.day(-5))
+        generate_reminders(self.clinic)
+        self.assertEqual(Reminder.objects.filter(status=PENDING).count(), 2)
+
+        for patient in (due_soon, missed):
+            self.make_appointment(patient, when=self.at(self.day(-2)))  # still "Booked"
+        generate_reminders(self.clinic)
+
+        self.assertEqual(Reminder.objects.filter(status=PENDING).count(), 2)
 
     def test_patient_opted_out_or_archived(self):
         opted_out = self.make_patient(full_name="Opted Out")

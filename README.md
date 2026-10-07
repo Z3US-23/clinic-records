@@ -63,6 +63,9 @@ Open http://127.0.0.1:8000. `seed_demo` creates **Demo Family Clinic** with abou
 and prints three demo logins (owner, doctor, receptionist). Demo phone numbers use the unallocated
 `0390` prefix, so tapping "Send on WhatsApp" in the demo can never message a real person.
 
+The public "Register your clinic" page is off unless `.env` has `ALLOW_CLINIC_SIGNUP=True`.
+Turn it on for demo sites only.
+
 To start the demo again from scratch (for example the morning of a demo, so "today" has appointments):
 
 ```bash
@@ -95,10 +98,15 @@ The app is a standard Django project. Example on [Render](https://render.com):
 2. Create a **PostgreSQL** database on Render.
 3. Create a **Web Service** from the repo:
    - Build command: `pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py createcachetable`
-   - Start command: `gunicorn config.wsgi`
+   - Start command: `gunicorn config.wsgi --timeout 60`
 4. Set environment variables (see `.env.example`): `DJANGO_SECRET_KEY` (long random string),
-   `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DATABASE_URL`, `SITE_URL`,
-   and `ALLOW_CLINIC_SIGNUP=False` if you onboard clinics yourself. Also:
+   `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DATABASE_URL` and `SITE_URL`. Also:
+   - `SITE_URL`: the public `https://` address, set before the first clinic uses reminders (the app
+     refuses to start without it when `DJANGO_DEBUG` is off). If you later change the domain, keep the
+     old host in `DJANGO_ALLOWED_HOSTS` until pending reminders have been sent, or the links in them
+     stop working.
+   - Leave `ALLOW_CLINIC_SIGNUP` unset on a pilot: public sign-up is off by default and you add each
+     clinic yourself. Turn it on for demo sites only.
    - `DJANGO_USE_X_FORWARDED_FOR=True`: the app runs behind Render's proxy, so this makes the audit log
      and the failed-sign-in lockout see each person's real IP address.
    - `DJANGO_CACHE_URL=db`: the lockout counts failed sign-ins in a cache shared by all server processes
@@ -107,6 +115,7 @@ The app is a standard Django project. Example on [Render](https://render.com):
    a persistent disk and point `MEDIA_ROOT` at it (or add S3-compatible storage) **before** real
    reports are uploaded.
 6. Turn on the database's automatic daily backups.
+7. Never run `seed_demo` on the pilot database: its demo logins and password are public.
 
 `DJANGO_DEBUG` is off by default, so production gets HTTPS redirects, secure cookies and HSTS.
 

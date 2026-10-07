@@ -1,5 +1,6 @@
 """Staff list, adding staff, editing roles/access and setting passwords (owner only)."""
 
+from django.conf import settings
 from django.urls import reverse
 
 from apps.accounts.models import Membership, User
@@ -114,10 +115,13 @@ class StaffAddTests(AccountsTestCase):
         user = User.objects.get(email="kamran@example.test")
         self.assertEqual(user.full_name, "Kamran Ali")
         self.assertTrue(user.check_password(NEW_PASSWORD))
+        # The owner knows this password, so it is only for the first sign-in.
+        self.assertTrue(user.must_change_password)
         membership = membership_of(user, self.clinic)
         self.assertEqual(membership.role, Role.DOCTOR)
         self.assertEqual(membership.registration_number, "PMDC-555")
         self.assertTrue(membership.is_active)
+        self.assertFalse(membership.is_pending)
         self.assertTrue(
             AuditLog.objects.filter(
                 action=Action.CREATE, clinic=self.clinic, object_type="Membership", object_id=str(membership.pk)
@@ -139,23 +143,34 @@ class StaffAddTests(AccountsTestCase):
         self.assertContains(response, "The two passwords don&#x27;t match.")
         self.assertFalse(User.objects.filter(email="kamran@example.test").exists())
 
-    def test_existing_account_gets_only_a_membership(self):
-        """A doctor who already works at another clinic keeps their own password and name."""
+    def test_existing_account_gets_an_invitation_not_access(self):
+        """A doctor who already works at another clinic must accept before this clinic can see them."""
         self.login(self.owner)
         response = self.client.post(
             self.url,
             self.form_data(email="OTHER@example.test", full_name="Someone Else", password1="", password2=""),
             follow=True,
         )
-        self.assertRedirects(response, reverse("accounts:staff_list"))
-        self.assertContains(response, "Omar Farooq already had an account and can sign in with their existing password.")
+        membership = membership_of(self.other_owner, self.clinic)
+        self.assertRedirects(response, reverse("accounts:staff_edit", args=[membership.pk]))
+        self.assertContains(response, f"other@example.test already has a {settings.PRODUCT_NAME} account")
+        self.assertContains(response, membership.get_invite_url())
 
+        self.assertTrue(membership.is_pending)
+        self.assertFalse(membership.is_active)
+        self.assertEqual(membership.role, Role.DOCTOR)
+        self.assertNotIn(self.other_owner, self.clinic.doctors)
+        # Nothing about their account is shown to this clinic, or changed.
+        self.assertNotContains(response, "Omar Farooq")
         self.other_owner.refresh_from_db()
         self.assertTrue(self.other_owner.check_password(TEST_PASSWORD))
         self.assertEqual(self.other_owner.full_name, "Omar Farooq")
-        self.assertEqual(membership_of(self.other_owner, self.clinic).role, Role.DOCTOR)
+        self.assertFalse(self.other_owner.must_change_password)
         # Their other clinic is untouched
         self.assertEqual(membership_of(self.other_owner, self.other_clinic).role, Role.OWNER)
+        entry = AuditLog.objects.get(action=Action.CREATE, object_type="Membership", object_id=str(membership.pk))
+        self.assertEqual(entry.summary, "Invited other@example.test to join as Doctor")
+        self.assertEqual(entry.clinic, self.clinic)
 
     def test_existing_account_password_is_never_changed(self):
         self.login(self.owner)
@@ -169,7 +184,16 @@ class StaffAddTests(AccountsTestCase):
         before = Membership.objects.count()
         response = self.client.post(self.url, self.form_data(email="Reception@example.test"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "already on your staff list")
+        self.assertContains(response, "Hina Malik is already on your staff list")
+        self.assertEqual(Membership.objects.count(), before)
+
+    def test_already_invited_is_an_error_that_names_only_the_email(self):
+        Membership(user=self.other_owner, clinic=self.clinic, role=Role.DOCTOR).start_invitation()
+        self.login(self.owner)
+        before = Membership.objects.count()
+        response = self.client.post(self.url, self.form_data(email="Other@example.test"))
+        self.assertContains(response, "You have already invited other@example.test")
+        self.assertNotContains(response, "Omar Farooq")
         self.assertEqual(Membership.objects.count(), before)
 
 
@@ -256,6 +280,8 @@ class StaffSetPasswordTests(AccountsTestCase):
         self.assertRedirects(response, reverse("accounts:staff_list"))
         self.receptionist.refresh_from_db()
         self.assertTrue(self.receptionist.check_password(NEW_PASSWORD))
+        # The owner knows it now, so the receptionist must choose their own at the next sign-in.
+        self.assertTrue(self.receptionist.must_change_password)
         self.assertTrue(
             AuditLog.objects.filter(
                 action=Action.UPDATE, clinic=self.clinic, summary="Reset password for Hina Malik"
@@ -280,6 +306,25 @@ class StaffSetPasswordTests(AccountsTestCase):
         )
         self.login(self.owner)
         self.assertEqual(self.post_password(self.receptionist).status_code, 403)
+
+    def test_refused_while_another_clinic_has_invited_them(self):
+        Membership(user=self.receptionist, clinic=self.other_clinic, role=Role.RECEPTIONIST).start_invitation()
+        self.login(self.owner)
+        self.assertEqual(self.post_password(self.receptionist).status_code, 403)
+        self.receptionist.refresh_from_db()
+        self.assertTrue(self.receptionist.check_password(TEST_PASSWORD))
+
+    def test_refused_for_someone_who_has_not_accepted_your_invitation(self):
+        """Even an account with no other clinic: until they accept, it isn't this clinic's to control."""
+        loner = User.objects.create_user(email="loner@example.test", password=TEST_PASSWORD, full_name="Lone Person")
+        Membership(user=loner, clinic=self.clinic, role=Role.DOCTOR).start_invitation()
+        self.login(self.owner)
+        for response in (self.client.get(self.url(loner)), self.post_password(loner)):
+            self.assertEqual(response.status_code, 403)
+            self.assertContains(response, "hasn't accepted your invitation", status_code=403)
+            self.assertNotContains(response, "Lone Person", status_code=403)
+        loner.refresh_from_db()
+        self.assertTrue(loner.check_password(TEST_PASSWORD))
 
     def test_refused_for_platform_admin_accounts(self):
         User.objects.filter(pk=self.doctor.pk).update(is_staff=True)

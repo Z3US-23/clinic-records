@@ -55,11 +55,11 @@
     <ol class="list">
       {% for a in waiting %}
         <li class="list-item">
-          <span class="token" title="Token {{ forloop.counter }}">{{ forloop.counter }}</span>
+          <span class="token" title="Token {{ a.token }}">{{ a.token }}</span>
           <div class="grow">
             <a class="title" href="{% url 'patients:detail' a.patient_id %}">{{ a.patient.full_name }}</a>
             <div class="meta">
-              {{ a.patient.mrn }} · here since {{ a.updated_at|time:"g:i a" }}{% if a.doctor_name %} · {{ a.doctor_name }}{% endif %}{% if a.reason %} · {{ a.reason }}{% endif %}
+              {{ a.patient.mrn }}{% if a.arrived_at %} · here since {{ a.arrived_at|time:"g:i a" }}{% endif %}{% if a.doctor_name %} · {{ a.doctor_name }}{% endif %}{% if a.reason %} · {{ a.reason }}{% endif %}
             </div>
           </div>
           <div class="btn-group">
@@ -121,7 +121,7 @@
                 </div>
               </td>
               <td data-label="Reminder">
-                {% if a.reminder %}<span class="badge {{ a.reminder.status|badge_class }}">{{ a.reminder.get_status_display }}</span>{% elif a.reminder_expected %}<span class="subtle small">Not yet</span>{% else %}<span class="subtle">—</span>{% endif %}
+                {% if a.reminder %}<span class="badge {{ a.reminder.status|badge_class }}">{{ a.reminder.get_status_display }}</span>{% elif a.reminders_off %}<span class="subtle small" title="{% if a.patient.is_archived %}Patient is archived{% else %}Patient did not agree to WhatsApp reminders{% endif %}">Reminders off</span>{% elif a.reminder_expected %}<span class="subtle small">Not yet</span>{% else %}<span class="subtle">—</span>{% endif %}
               </td>
               <td data-label="" class="appt-actions">
                 <div class="btn-group">
