@@ -90,6 +90,24 @@ python manage.py generate_reminders
 
 On Render use a Cron Job; on a Linux server use `cron`; on Windows use Task Scheduler.
 
+## Online demo
+
+The public demo runs the made-up Demo Family Clinic with `DEMO_MODE` on. Visitors:
+
+- sign in with one click as the doctor, the receptionist or the clinic owner (no password shared);
+- see a banner on every page asking them not to enter real patient information;
+- can try everything except the few changes that would spoil the demo for the next visitor, such as
+  passwords, staff, clinic settings, patient import and file uploads (`apps/core/demo.py`).
+
+Every start creates a fresh demo clinic dated around today, and the free server restarts after
+15 idle minutes, so visitors' changes are wiped regularly. The first visit after a quiet spell
+takes about a minute while the server wakes up.
+
+To deploy your own copy on [Render](https://render.com)'s free tier: **New → Blueprint**, choose
+this repository, then **Deploy Blueprint**. `render.yaml` holds the whole setup.
+
+**Never turn `DEMO_MODE` on for a site with real patients**: one-click sign-in lets anyone in.
+
 ## Putting it online (pilot)
 
 The app is a standard Django project. Example on [Render](https://render.com):

@@ -1,0 +1,29 @@
+# Render Blueprint for the public ONLINE DEMO: made-up patients, one-click sign-in.
+# Deploy: Render dashboard -> New -> Blueprint -> choose this repository -> Deploy Blueprint.
+#
+# Not for real patients. A real clinic needs PostgreSQL (DATABASE_URL), storage that keeps
+# uploaded lab reports, a daily `generate_reminders` job, and DEMO_MODE off. See README.md.
+services:
+  - type: web
+    name: clinic-records-demo
+    runtime: python
+    plan: free
+    region: singapore  # closest Render region to Pakistan and India
+    branch: main
+    # Settings need a public https address even while building; Render's own is used when available.
+    buildCommand: pip install -r requirements.txt && SITE_URL="${RENDER_EXTERNAL_URL:-https://build.invalid}" python manage.py collectstatic --noinput
+    startCommand: bash scripts/start_demo.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEMO_PASSWORD  # the demo staff's password; visitors use the one-click buttons instead
+        generateValue: true
+      - key: DEMO_MODE
+        value: "True"
+      - key: ALLOW_CLINIC_SIGNUP
+        value: "False"
+      # Behind Render's proxy: read each visitor's own IP (sign-in lockout, audit log).
+      - key: DJANGO_USE_X_FORWARDED_FOR
+        value: "True"

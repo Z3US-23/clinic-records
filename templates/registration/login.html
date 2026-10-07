@@ -2,7 +2,23 @@
 {% block title %}Sign in · {{ PRODUCT_NAME }}{% endblock %}
 
 {% block content %}
-  <h1>Sign in</h1>
+  {% if demo_roles %}
+    <h1>Try the demo</h1>
+    <p class="muted">A made-up clinic in Lahore with 60 patients. Pick who you want to be:</p>
+    <div class="demo-roles mt-2">
+      {% for item in demo_roles %}
+        <form method="post" action="{% url 'core:demo_login' item.role %}" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="demo-role">
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.description }}</span>
+          </button>
+        </form>
+      {% endfor %}
+    </div>
+    <div class="demo-divider"><span>or sign in with a password</span></div>
+  {% endif %}
+  <h1{% if demo_roles %} class="sr-only"{% endif %}>Sign in</h1>
   <p class="muted">Use the email and password your clinic gave you.</p>
 
   <form method="post" action="{% url 'accounts:login' %}" class="form mt-2">

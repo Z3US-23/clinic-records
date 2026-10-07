@@ -67,6 +67,7 @@
   <div class="sidebar-backdrop" data-sidebar-backdrop hidden></div>
 
   <div class="main">
+    {% include "includes/demo_banner.html" %}
     <header class="topbar no-print">
       <button type="button" class="icon-btn menu-toggle" data-toggle-sidebar aria-label="Open menu" aria-controls="sidebar">{% include "includes/icon.html" with name="menu" %}</button>
       <div class="global-search" data-patient-search data-url="{% url 'patients:search_json' %}">

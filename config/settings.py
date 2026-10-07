@@ -65,6 +65,12 @@ if DEBUG:
 
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
+# Render (render.com) tells every web service its public address, so it needs no manual host settings.
+RENDER_EXTERNAL_HOSTNAME = env("RENDER_EXTERNAL_HOSTNAME")
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -96,6 +102,8 @@ MIDDLEWARE = [
     # After authentication and messages: sends people whose password was set by a clinic
     # owner to "Change password" before anything else.
     "apps.accounts.middleware.PasswordChangeRequiredMiddleware",
+    # Does nothing unless DEMO_MODE is on (the public online demo).
+    "apps.core.demo.DemoGuardMiddleware",
     "apps.core.middleware.PrivateCacheControlMiddleware",
 ]
 
@@ -126,6 +134,9 @@ DATABASES = {
         conn_max_age=600,
     )
 }
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    # Wait for a busy database instead of failing at once when two requests write together.
+    DATABASES["default"].setdefault("OPTIONS", {})["timeout"] = 20
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -289,4 +300,12 @@ def _site_url(value, debug):
 
 # Used to build absolute links (e.g. appointment confirmation links in WhatsApp
 # messages) when there is no incoming request, such as in scheduled jobs.
-SITE_URL = _site_url(env("SITE_URL"), DEBUG)
+# On Render it defaults to the service's own public address.
+SITE_URL = _site_url(env("SITE_URL") or env("RENDER_EXTERNAL_URL"), DEBUG)
+
+# The public online demo: one-click sign-in to the made-up demo clinic, a "made-up data"
+# banner on every page, and a few changes switched off (see apps/core/demo.py).
+# NEVER turn this on for a site with real patients: anyone could sign in.
+DEMO_MODE = env_bool("DEMO_MODE", False)
+if DEMO_MODE:
+    DATA_UPLOAD_MAX_MEMORY_SIZE = 256 * 1024  # real forms are a few KB; see DemoGuardMiddleware

@@ -1,4 +1,5 @@
 from django import forms
+from django.conf import settings
 from django.utils import timezone
 
 from apps.core.phone import normalize_mobile, with_ascii_digits
@@ -97,11 +98,21 @@ class PatientForm(forms.ModelForm):
     def _clean_phone_field(self, name):
         # Urdu / Hindi digits are saved as 0-9 (formatting kept), so search and tel: links work.
         value = with_ascii_digits((self.cleaned_data.get(name) or "").strip())
-        if value and not normalize_mobile(value, self.clinic.country):
+        number = normalize_mobile(value, self.clinic.country) if value else ""
+        if value and not number:
             raise forms.ValidationError(
                 f"This doesn't look like a mobile number. Please write it in full, "
                 f"e.g. {phone_example(self.clinic.country)}."
             )
+        if value and settings.DEMO_MODE:
+            from apps.core.demo import DEMO_PHONE_PREFIX, is_made_up_number
+
+            if not is_made_up_number(number):
+                # The next visitor's "Send on WhatsApp" must never reach a real person.
+                raise forms.ValidationError(
+                    f"This is the online demo: please use a made-up number starting {DEMO_PHONE_PREFIX}-, "
+                    f"e.g. {DEMO_PHONE_PREFIX}-1234567."
+                )
         return value
 
     def clean_phone(self):

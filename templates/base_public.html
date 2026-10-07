@@ -12,6 +12,7 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body class="public-body {% block body_class %}{% endblock %}">
+  {% include "includes/demo_banner.html" %}
   {% block brand %}<div class="public-brand"><span class="brand-mark" aria-hidden="true">+</span>{{ PRODUCT_NAME }}</div>{% endblock %}
   <main class="public-card {% block card_class %}{% endblock %}" id="main">
     {% include "includes/messages.html" %}

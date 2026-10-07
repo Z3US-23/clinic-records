@@ -72,6 +72,8 @@ PAGES = [
     Page("core:manifest", access=PUBLIC),
     Page("core:service_worker", access=PUBLIC),
     Page("core:offline", access=PUBLIC),
+    # Online demo only: one-click sign-in, POST only (and 404 unless settings.DEMO_MODE).
+    Page("core:demo_login", args=("demo_role",), post_only=True),
     # --- accounts ---
     Page("accounts:login", access=PUBLIC, status=302),  # signed-in users are sent to Today
     Page("accounts:signup", access=PUBLIC, status=302),  # signed-in users are sent to Today
@@ -209,6 +211,7 @@ class SmokeTests(TempMediaMixin, ClinicTestCase):
             "clinic": self.clinic.pk,
             "token": self.appointment.confirm_token,
             "invitation": "not-a-real-invitation",
+            "demo_role": "doctor",
             "tomorrow": (timezone.localdate() + timedelta(days=1)).isoformat(),
         }
 

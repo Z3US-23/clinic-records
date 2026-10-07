@@ -7,6 +7,8 @@ def app_context(request):
     membership = getattr(request, "membership", None)
     context = {
         "PRODUCT_NAME": settings.PRODUCT_NAME,
+        "DEMO_MODE": settings.DEMO_MODE,
+        "demo_roles": [],
         "current_clinic": clinic,
         "current_membership": membership,
         "is_clinician": bool(membership and membership.is_clinician),
@@ -15,6 +17,10 @@ def app_context(request):
         "nav_reschedule_requests": 0,
         "user_clinics": [],
     }
+    if settings.DEMO_MODE and not request.user.is_authenticated:
+        from .demo import demo_roles
+
+        context["demo_roles"] = demo_roles()  # one-click sign-in buttons on the sign-in page
     if clinic is not None:
         from apps.accounts.models import Membership
         from apps.reminders.models import Reminder
