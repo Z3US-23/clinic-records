@@ -4,14 +4,17 @@
 #   bash ~/clinic-records/scripts/pythonanywhere_setup.sh
 set -euo pipefail
 cd ~/clinic-records
-HOST="${USER}.pythonanywhere.com"
+# PythonAnywhere addresses and file names are lowercase, even for usernames with capitals.
+NAME=$(echo "${USER}" | tr "[:upper:]" "[:lower:]")
+HOST="${NAME}.pythonanywhere.com"
 
 echo "1/4 Installing packages (takes a few minutes)..."
 python3.12 -m venv .venv
 .venv/bin/pip install --quiet -r requirements.txt
 
-if [ ! -f .env ]; then
+if [ ! -f .env ] || ! grep -q "^DJANGO_ALLOWED_HOSTS=${HOST}$" .env; then
   echo "2/4 Writing settings (.env) with new random secrets..."
+  rm -f .env
   SECRET=$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(50))')
   DEMO_PW=$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(24))')
   cat > .env <<ENV
@@ -35,7 +38,7 @@ echo "3/4 Preparing styles and the demo clinic..."
 bash scripts/reset_demo.sh
 
 echo "4/4 Pointing the web app at this code..."
-cat > "/var/www/${USER}_pythonanywhere_com_wsgi.py" <<'WSGI'
+cat > "/var/www/${NAME}_pythonanywhere_com_wsgi.py" <<'WSGI'
 import os
 import sys
 
